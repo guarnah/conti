@@ -429,6 +429,14 @@ function potStatus(id) {
   const used = S.expTx.filter(t => t.from === id).reduce((a, t) => a + (Number(t.amount) || 0), 0);
   return {init, saved, used, avail:init + saved - used};
 }
+/* obiettivo di un salvadanaio: quanto manca e quanto serve al mese per arrivarci entro la data */
+function goalInfo(c, p) {
+  const goal = Number(c.potGoal) || 0; if (!goal) return null;
+  const missing = Math.max(0, goal - p.avail), pct = Math.max(0, Math.min(1, p.avail / goal));
+  const n = c.potGoalM ? Math.max(1, monthDiff(curMonth(), c.potGoalM)) : 0;
+  return {goal, missing, pct, n, perMonth:n && missing ? missing / n : 0, late:!!c.potGoalM && c.potGoalM < curMonth() && missing > 0};
+}
+const goalLine = (c, g) => g.missing <= 0 ? "Obiettivo raggiunto" : `Mancano ${eur0(g.missing)} su ${eur0(g.goal)}` + (c.potGoalM ? (g.late ? ` · scaduto a ${mLong(c.potGoalM)}` : ` · servono ${eur0(g.perMonth)} al mese fino a ${mLong(c.potGoalM)}`) : "");
 const baseBud = (c, budCats, m) => isAuto(c) ? subsTotal(m) : (Number(budCats?.[c.id]) || 0);
 /* tutto quello che non è assegnato alle altre categorie va nella categoria "resto": ogni euro ha una destinazione */
 function restFor(budCats, m = S.month) {
@@ -458,7 +466,7 @@ function incomeFor(m) {
 
 function budgetFor() {
   if (S.budget?.cats) return {cats:S.budget.cats, draft:false};
-  if (S.prevBudget?.cats) return {cats:S.prevBudget.cats, draft:true, from:S.prevBudget.month};
+  if (S.prevBudget?.cats) { const o = {...S.prevBudget.cats}; cats().forEach(c => { if (!(c.id in o) && Number(c.defaultBudget)) o[c.id] = Number(c.defaultBudget); }); return {cats:o, draft:true, from:S.prevBudget.month}; }
   const o = {}; cats().forEach(c => o[c.id] = Number(c.defaultBudget) || 0);
   return {cats:o, draft:true, from:null};
 }
@@ -695,13 +703,13 @@ function viewSalvadanai() {
   if (S.potView) return viewPot();
   const pl = pots().map(c => ({c, ...potStatus(c.id)}));
   const tot = pl.reduce((a, p) => a + p.avail, 0);
-  let h = `<div><h1 class="pt">Salvadanai</h1><p class="muted sm">Quanto hai da parte. Una spesa pagata da un salvadanaio non pesa sul budget del mese.</p></div>`;
-  if (!pl.length) return h + `<div class="card empty">${ic("piggy")}<div>Nessun salvadanaio. Aggiungi una categoria nell'area Risparmio in Impostazioni.</div></div>`;
+  let h = `<div class="between" style="align-items:flex-end;gap:12px"><div><h1 class="pt">Salvadanai</h1><p class="muted sm">Quanto hai da parte. Una spesa pagata da un salvadanaio non pesa sul budget del mese.</p></div><button class="btn b-default b-sm" data-act="pot-new" style="flex:none">${ic("plus")}Nuovo</button></div>`;
+  if (!pl.length) return h + `<div class="card empty">${ic("piggy")}<div>Nessun salvadanaio. Creane uno per un viaggio, la casa o una spesa grossa.</div><button class="btn b-default b-sm" data-act="pot-new" style="margin-top:6px">${ic("plus")}Nuovo salvadanaio</button></div>`;
   h += `<div class="card hero"><div class="card-c stack" style="gap:14px"><div><div class="lbl">Totale da parte</div><div class="big mono">${eur(tot)}</div><div class="muted sm" style="margin-top:4px">${pl.length} ${pl.length === 1 ? "salvadanaio" : "salvadanai"}</div></div>
     ${tot > 0 ? `<div class="stack" style="gap:10px">${pl.filter(p => p.avail > 0).map(p => `<div class="stack" style="gap:5px"><div class="between sm"><span>${esc(p.c.name)}</span><span class="mono muted">${Math.round(p.avail / tot * 100)}%</span></div><div class="prog"><i style="width:${p.avail / tot * 100}%;background:var(--chart-3)"></i></div></div>`).join("")}</div>` : ""}</div></div>`;
   h += `<div class="card"><div class="card-c flush">` + pl.map(p => `<button class="crow" data-act="open-pot" data-id="${esc(p.c.id)}">
       <div class="between"><span class="nm">${esc(p.c.name)}</span><span class="vl mono"><b style="color:${p.avail < 0 ? "var(--destructive)" : "var(--foreground)"}">${eur0(p.avail)}</b></span></div>
-      <div class="xs muted">${esc([p.init ? "saldo iniziale " + eur0(p.init) : "", "messi da parte " + eur0(p.saved), p.used ? "usati " + eur0(p.used) : ""].filter(Boolean).join(" · "))}</div></button>`).join(`<div class="sep"></div>`) + `</div></div>
+      ${(g => g ? `${progHtml(p.avail, g.goal)}<div class="xs muted">${esc(goalLine(p.c, g))}</div>` : `<div class="xs muted">${esc([p.init ? "saldo iniziale " + eur0(p.init) : "", "messi da parte " + eur0(p.saved), p.used ? "usati " + eur0(p.used) : ""].filter(Boolean).join(" · "))}</div>`)(goalInfo(p.c, p))}</button>`).join(`<div class="sep"></div>`) + `</div></div>
     <div class="row"><button class="btn b-outline b-sm" data-act="goto-pot-settings">${ic("sliders")}Saldi iniziali e categorie</button></div>`;
   return h;
 }
@@ -709,11 +717,13 @@ function viewPot() {
   const c = catById(S.potView); if (!c) { S.potView = ""; return viewMovimenti(); }
   const p = potStatus(c.id);
   const list = S.expTx.filter(t => t.cat === c.id || t.from === c.id).sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.created || 0) - (a.created || 0));
-  let h = `<div class="row"><button class="btn b-ghost b-sm" data-act="close-pot"><svg class="i" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>Indietro</button></div>
+  const g = goalInfo(c, p);
+  let h = `<div class="between"><button class="btn b-ghost b-sm" data-act="close-pot"><svg class="i" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>Salvadanai</button><button class="btn b-outline b-sm" data-act="pot-edit" data-id="${esc(c.id)}">Modifica</button></div>
   <div class="card hero"><div class="card-c stack" style="gap:14px">
     <div><div class="lbl">${esc(c.name)}</div><div class="big mono" style="color:${p.avail < 0 ? "var(--destructive)" : "var(--foreground)"}">${eur(p.avail)}</div><div class="muted sm" style="margin-top:4px">disponibile</div></div>
     <div class="stats"><div class="stat" style="padding:0"><div class="l">Saldo iniziale</div><div class="v mono">${eur0(p.init)}</div></div><div class="stat" style="padding:0"><div class="l">Messi da parte</div><div class="v mono">${eur0(p.saved)}</div></div><div class="stat" style="padding:0"><div class="l">Usati</div><div class="v mono">${eur0(p.used)}</div></div></div>
-    <p class="xs muted">Per usarlo, quando inserisci una spesa scegli "Pagata con: ${esc(c.name)}". Il saldo iniziale si cambia in Impostazioni › Salvadanai.</p>
+    ${g ? `<div class="stack" style="gap:6px">${progHtml(p.avail, g.goal)}<div class="between sm"><span class="muted">${esc(goalLine(c, g))}</span><span class="mono">${Math.round(g.pct * 100)}%</span></div></div>` : ""}
+    <p class="xs muted">${Number(c.defaultBudget) ? `Versamento previsto ${eur0(c.defaultBudget)} al mese, dal budget. ` : ""}Per usarlo, quando inserisci una spesa scegli "Pagata con: ${esc(c.name)}".</p>
   </div></div>`;
   if (!list.length) return h + `<div class="card empty">${ic("list")}<div>Ancora nessun movimento in questo salvadanaio.</div></div>`;
   const days = []; for (const t of list) { const d = days[days.length - 1]; if (d && d.date === t.date) d.items.push(t); else days.push({date:t.date, items:[t]}); }
@@ -1033,6 +1043,59 @@ async function saveSheet() {
   } catch (e) { fail(e); const b = $("#sSave"); if (b) b.disabled = false; }
 }
 
+/* ---------- drawer salvadanaio ---------- */
+let potState = null;
+function openPotEdit(id) {
+  const c = id ? catById(id) : null;
+  potState = {confirmDel:false, item:c ? {id:c.id, name:c.name, monthlyStr:String(c.defaultBudget || "").replace(".", ","), initStr:String(c.potInitial || "").replace(".", ","), goalStr:String(c.potGoal || "").replace(".", ","), goalM:c.potGoalM || "", addBud:false}
+    : {id:"pot_" + Math.random().toString(36).slice(2, 8), isNew:true, name:"", monthlyStr:"", initStr:"", goalStr:"", goalM:"", addBud:false}};
+  const bg = document.createElement("div"); bg.className = "ovl"; bg.id = "potBg";
+  bg.innerHTML = `<div class="drawer" role="dialog" aria-modal="true" aria-labelledby="pTitle" id="potd"></div>`;
+  document.body.appendChild(bg); document.body.style.overflow = "hidden";
+  bg.addEventListener("click", e => { if (e.target === bg) closePotEdit(); });
+  drawPotEdit(); enableSwipeClose(bg, closePotEdit);
+}
+function closePotEdit() { closeOverlay("potBg"); potState = null; }
+function drawPotEdit() {
+  const el = $("#potd"); if (!el || !potState) return; const x = potState.item;
+  const c = !x.isNew && catById(x.id); const p = c ? potStatus(c.id) : null;
+  el.innerHTML = `<div class="handle-zone"><div class="handle"></div></div>
+    <div class="between"><div><h2 id="pTitle" style="font-size:17px;font-weight:600">${x.isNew ? "Nuovo salvadanaio" : "Modifica salvadanaio"}</h2><p class="muted sm">Soldi messi da parte per uno scopo preciso</p></div><button class="btn b-ghost b-icon b-sm" data-act="pot-close" aria-label="Chiudi">${ic("x")}</button></div>
+    <div class="field"><label for="pName">Nome</label><input id="pName" class="inp" placeholder="es. Viaggio Malesia" value="${esc(x.name)}"></div>
+    <div class="grid2"><div class="field"><label for="pMonthly">Versamento al mese €</label><input id="pMonthly" class="inp mono" inputmode="decimal" placeholder="0" value="${esc(x.monthlyStr)}"></div>
+      <div class="field"><label for="pInit">Già da parte €</label><input id="pInit" class="inp mono" inputmode="decimal" placeholder="0" value="${esc(x.initStr)}"></div></div>
+    <div class="grid2"><div class="field"><label for="pGoal">Obiettivo € (facoltativo)</label><input id="pGoal" class="inp mono" inputmode="decimal" placeholder="—" value="${esc(x.goalStr)}"></div>
+      <div class="field"><label for="pGoalM">Entro (facoltativo)</label><input id="pGoalM" class="inp" type="month" value="${esc(x.goalM)}"></div></div>
+    <label class="row sm" style="gap:8px;cursor:pointer"><input type="checkbox" id="pAddBud" ${x.addBud ? "checked" : ""}>${x.isNew ? "Inizia già da" : "Applica il versamento anche a"} ${esc(mLong(curMonth()))}</label>
+    <p class="xs muted">Il versamento entra nel budget e si toglie da ${esc(catById(restCat())?.name || "quello che resta")}. ${x.isNew ? "Senza la spunta parte dal mese prossimo." : "Senza la spunta vale dai prossimi budget."} "Già da parte" è quello che c'era prima di usare l'app.${p ? ` Oggi il saldo è <span class="mono">${eur(p.avail)}</span>.` : ""}</p>
+    <div class="dfoot">${x.isNew ? "" : `<button class="btn ${potState.confirmDel ? "b-destructive" : "b-dghost"}" data-act="pot-del">${ic("trash")}${potState.confirmDel ? (p && Math.abs(p.avail) > 0.5 ? `Elimina (saldo ${eur0(p.avail)})` : "Conferma") : "Elimina"}</button>`}<span class="grow"></span><button class="btn b-outline" data-act="pot-close">Annulla</button><button class="btn b-default" data-act="pot-save" id="pSave">Salva</button></div>`;
+  if (x.isNew) setTimeout(() => $("#pName")?.focus(), 40);
+}
+function readPotInputs() { const x = potState?.item; if (!x || !$("#pName")) return; x.name = $("#pName").value; x.monthlyStr = $("#pMonthly").value; x.initStr = $("#pInit").value; x.goalStr = $("#pGoal").value; x.goalM = $("#pGoalM").value; x.addBud = $("#pAddBud").checked; }
+async function savePot() {
+  readPotInputs(); const x = potState.item; const name = x.name.trim();
+  const monthly = parseAmt(x.monthlyStr || "0"), init = parseAmt(x.initStr || "0"), goal = parseAmt(x.goalStr || "0");
+  if (!name) return toast("Scrivi il nome del salvadanaio");
+  if (![monthly, init, goal].every(v => isFinite(v) && v >= 0)) return toast("Importo non valido");
+  const cfg = structuredClone(S.cfg); cfg.categories = cfg.categories || [];
+  const fields = {name, defaultBudget:r2(monthly), potInitial:r2(init), potGoal:r2(goal) || null, potGoalM:x.goalM || null, pot:true};
+  const i = cfg.categories.findIndex(c => c.id === x.id);
+  if (i >= 0) cfg.categories[i] = {...cfg.categories[i], ...fields}; else cfg.categories.push({id:x.id, group:"ris", fixed:true, hidden:false, ...fields});
+  $("#pSave").disabled = true;
+  try {
+    await S.db.doc("config/main").set(cfg); S.cfg = cfg;
+    if (x.addBud) { const m = curMonth(), ref = S.db.doc("budgets/" + m), snap = await ref.get();
+      if (snap.exists) { const d = snap.data(); await ref.set({...d, cats:{...d.cats, [x.id]:r2(monthly)}, saved:Date.now()}); } }
+    closePotEdit(); if (x.isNew) S.potView = x.id; S.view = "salvadanai"; render();
+    toast(x.isNew ? "Salvadanaio creato" : "Salvadanaio aggiornato");
+  } catch (e) { fail(e); const b = $("#pSave"); if (b) b.disabled = false; }
+}
+async function deletePot() {
+  if (!potState.confirmDel) { readPotInputs(); potState.confirmDel = true; return drawPotEdit(); }
+  const cfg = structuredClone(S.cfg); const k = cfg.categories.find(c => c.id === potState.item.id); if (k) k.hidden = true;
+  try { await S.db.doc("config/main").set(cfg); S.cfg = cfg; closePotEdit(); S.potView = ""; render(); toast("Salvadanaio eliminato · i movimenti restano"); } catch (e) { fail(e); }
+}
+
 /* ---------- drawer fondo spese annuali ---------- */
 let fundState = null;
 function openFund() {
@@ -1202,6 +1265,11 @@ document.addEventListener("click", async e => {
   if (act === "open-tag") { e.stopPropagation(); return openTag(a.dataset.tag); }
   if (act === "close-tag") return closeTag();
   if (act === "open-pot") { S.potView = a.dataset.id; S.view = "salvadanai"; S.enter = "fade"; window.scrollTo(0, 0); render(); return; }
+  if (act === "pot-new") return openPotEdit();
+  if (act === "pot-edit") return openPotEdit(a.dataset.id);
+  if (act === "pot-close") return closePotEdit();
+  if (act === "pot-save") return savePot();
+  if (act === "pot-del") return deletePot();
   if (act === "goto-pot-settings") { S.potView = ""; S.view = "altro"; window.scrollTo(0, 0); render(); setTimeout(() => document.querySelector('tr[data-row="pot"]')?.closest(".card")?.scrollIntoView({block:"start"}), 50); return; }
   if (act === "close-pot") { S.potView = ""; S.view = "salvadanai"; S.enter = "fade"; window.scrollTo(0, 0); render(); return; }
   if (act === "open-fund") return openFund();
@@ -1291,6 +1359,7 @@ document.addEventListener("change", e => {
     if (Math.abs(dx) > 70 && Math.abs(dy) < 45 && Date.now() - t0 < 600) (dx < 0 ? $("#nextM") : $("#prevM")).click();
     x0 = null; }, {passive:true}); })();
 document.addEventListener("keydown", e => {
+  if (potState) { if (e.key === "Escape") closePotEdit(); if (e.key === "Enter" && e.target.tagName === "INPUT" && e.target.type !== "checkbox") { e.preventDefault(); savePot(); } return; }
   if (subState) { if (e.key === "Escape") closeSubs(); if (e.key === "Enter" && e.target.tagName === "INPUT" && subState.mode === "edit") { e.preventDefault(); saveSub(); } return; }
   if (fundState) { if (e.key === "Escape") closeFund(); if (e.key === "Enter" && e.target.tagName === "INPUT" && fundState.mode === "edit") { e.preventDefault(); saveFundItem(); } return; }
   if (!sheetState) return;
