@@ -445,7 +445,14 @@ function restFor(budCats, m = S.month) {
 }
 const budOf = (c, budCats, m = S.month) => isRest(c) ? Math.max(0, restFor(budCats, m)) : baseBud(c, budCats, m);
 const isFixedSrc = id => Number(srcById(id)?.fixed) > 0;
-const fixedMonthly = () => (S.cfg?.sources || []).reduce((a, x) => a + (Number(x.fixed) || 0), 0);
+/* importo fisso di una fonte in un mese: l'ultima variazione con data <= mese, altrimenti l'importo base */
+const lastChange = x => Object.keys(x.fixedChanges || {}).sort().pop() || "";
+function fixedAt(x, m) {
+  if (!(Number(x.fixed) > 0)) return 0;
+  const k = Object.keys(x.fixedChanges || {}).filter(d => d <= m).sort().pop();
+  return k ? Number(x.fixedChanges[k]) || 0 : Number(x.fixed) || 0;
+}
+const fixedMonthly = m => (S.cfg?.sources || []).reduce((a, x) => a + fixedAt(x, m), 0);
 /* netto fatturato (fonti non fisse) in un mese: prima dell'avvio dallo storico, poi dai movimenti */
 function invoicedIn(m) {
   const start = S.cfg?.startMonth || "0000-00";
@@ -460,7 +467,7 @@ function grossIn(m) {
 /* entrate mensili = importi fissi (borsa) + netto fatturato negli ultimi 12 mesi / 12 */
 function incomeFor(m) {
   let pool = 0; for (let k = addMonth(m, -11); k <= m; k = addMonth(k, 1)) pool += invoicedIn(k);
-  const fixed = fixedMonthly();
+  const fixed = fixedMonthly(m);
   return {fixed, pool, monthly:fixed + pool / 12, invoiced:invoicedIn(m)};
 }
 
@@ -889,7 +896,7 @@ const ROW = {
   hist: x => `<td><input class="inp" type="month" style="width:170px" data-f="m" value="${esc(x.m || "")}" aria-label="Mese"></td><td class="r"><input class="inp num" style="width:100px" data-f="g" inputmode="decimal" value="${esc(String(x.g ?? 0).replace(".", ","))}" aria-label="Lordo"></td><td class="r"><input class="inp num" style="width:100px" data-f="v" inputmode="decimal" value="${esc(String(x.v ?? 0).replace(".", ","))}" aria-label="Netto"></td><td>${delBtn}</td>`,
   annual: (a, paid) => `<td><input class="inp" style="min-width:140px" data-f="name" placeholder="Nuova voce" value="${esc(a.name || "")}" aria-label="Voce"></td><td class="r"><input class="inp num" style="width:92px" data-f="amount" inputmode="decimal" value="${esc(String(a.amount ?? 0).replace(".", ","))}" aria-label="Importo annuo"></td><td class="r"><input class="inp num" style="width:62px" data-f="share" inputmode="numeric" value="${esc(a.share ?? 100)}" aria-label="Tua quota percentuale"></td><td><select class="inp" style="width:84px" data-f="due" aria-label="Mese di scadenza">${monthOpts(a.due)}</select></td><td class="r mono muted" style="white-space:nowrap">${a.name ? eur((Number(a.amount) || 0) * ((a.share ?? 100) / 100) / 12) : ""}${paid ? `<br><span class="badge bd-success">pagato ${eur0(paid)}</span>` : ""}</td><td>${delBtn}</td>`,
   recurring: x => `<td><input class="inp" style="min-width:140px" data-f="name" placeholder="Nuova ricorrente" value="${esc(x.name || "")}" aria-label="Voce"></td><td class="r"><input class="inp num" style="width:88px" data-f="amount" inputmode="decimal" value="${esc(String(x.amount ?? 0).replace(".", ","))}" aria-label="Importo"></td><td><select class="inp" style="min-width:150px" data-f="cat" aria-label="Categoria">${catOpts(x.cat)}</select></td><td>${delBtn}</td>`,
-  sources: x => `<td><input class="inp" style="min-width:150px" data-f="name" placeholder="Nuova fonte" value="${esc(x.name || "")}" aria-label="Fonte"></td><td class="r"><input class="inp num" style="width:66px" data-f="pct" inputmode="numeric" value="${esc(x.pct ?? 80)}" aria-label="Percentuale netta"></td><td class="r"><input class="inp num" style="width:100px" data-f="fixed" inputmode="decimal" placeholder="—" value="${esc(x.fixed ? String(x.fixed).replace(".", ",") : "")}" aria-label="Importo fisso"></td><td>${delBtn}</td>`,
+  sources: x => `<td><input class="inp" style="min-width:150px" data-f="name" placeholder="Nuova fonte" value="${esc(x.name || "")}" aria-label="Fonte"></td><td class="r"><input class="inp num" style="width:66px" data-f="pct" inputmode="numeric" value="${esc(x.pct ?? 80)}" aria-label="Percentuale netta"></td><td class="r"><input class="inp num" style="width:100px" data-f="fixed" inputmode="decimal" placeholder="—" value="${esc(x.fixed ? String(x.fixed).replace(".", ",") : "")}" aria-label="Importo fisso"></td><td class="r"><input class="inp num" style="width:100px" data-f="newAmt" inputmode="decimal" placeholder="—" value="${esc(lastChange(x) ? String(x.fixedChanges[lastChange(x)]).replace(".", ",") : "")}" aria-label="Nuovo importo fisso"></td><td><input class="inp" type="month" style="width:150px" data-f="from" value="${esc(lastChange(x))}" aria-label="Nuovo importo dal mese"></td><td>${delBtn}</td>`,
   categories: x => `<td><input class="inp" style="min-width:170px" data-f="name" placeholder="Nuova categoria" value="${esc(x.name || "")}" aria-label="Nome"></td><td><select class="inp" style="width:auto" data-f="group" aria-label="Area">${GROUPS.map(g => `<option value="${g.id}" ${g.id === x.group ? "selected" : ""}>${g.name}</option>`).join("")}</select></td><td><input type="checkbox" data-f="fixed" ${x.fixed ? "checked" : ""} aria-label="Spesa fissa"></td><td class="r"><input class="inp num" style="width:80px" data-f="defaultBudget" inputmode="decimal" value="${esc(x.defaultBudget || 0)}" aria-label="Budget base"></td><td><input type="checkbox" data-f="active" ${x.hidden ? "" : "checked"} aria-label="Attiva"></td>`
 };
 const tblCard = (kind, title, desc, heads, items, rowFn, addLbl, foot = "") => `<div class="card"><div class="card-h"><div><div class="card-t">${title}</div><div class="card-d">${desc}</div></div></div>
@@ -904,7 +911,7 @@ function viewAltro() {
     `<div class="grid2" style="margin-top:16px"><div class="field"><label for="fundInitial">Saldo iniziale del fondo</label><input class="inp" id="fundInitial" inputmode="decimal" value="${esc(String(c.fundInitial || 0).replace(".", ","))}"></div><div class="field"><label for="startMonth">Accantona a partire da</label><input class="inp" id="startMonth" type="month" value="${esc(c.startMonth || curMonth())}"></div></div>
     <p class="xs muted" style="margin-top:10px">"Tua %" serve per le spese che dividi, ad esempio bollette al 50%.</p>`)}
   ${tblCard("recurring", "Ricorrenti mensili", "Proposte ogni mese, le registri con un tap. Gli abbonamenti si gestiscono a parte.", [["Voce"], ["Importo", "r"], ["Categoria"], [""]], (c.recurring || []).filter(x => x.cat !== SUBCAT), ROW.recurring, "Aggiungi ricorrente", `<div style="margin-top:10px"><button class="btn b-outline b-sm" data-act="open-subs">${ic("repeat")}Gestisci abbonamenti (${subs().length + annSubs().length})</button></div>`)}
-  ${tblCard("sources", "Fonti di entrata", "Le fatture si spalmano su 12 mesi; gli importi fissi contano ogni mese", [["Fonte"], ["% netto", "r"], ["Fisso al mese", "r"], [""]], c.sources || [], ROW.sources, "Aggiungi fonte", `<p class="xs muted" style="margin-top:10px">Una fonte con importo fisso (la borsa) entra in automatico ogni mese e non va registrata. Le altre le registri quando fatturi.</p>`)}
+  ${tblCard("sources", "Fonti di entrata", "Le fatture si spalmano su 12 mesi; gli importi fissi contano ogni mese", [["Fonte"], ["% netto", "r"], ["Fisso al mese", "r"], ["Nuovo importo", "r"], ["Dal mese"], [""]], c.sources || [], ROW.sources, "Aggiungi fonte", `<p class="xs muted" style="margin-top:10px">Una fonte con importo fisso (la borsa) entra in automatico ogni mese e non va registrata. Le altre le registri quando fatturi. Se l'importo fisso cambia, scrivi il nuovo importo e il mese da cui vale: i mesi prima restano con quello vecchio.</p>`)}
   <div class="card"><div class="card-h"><div><div class="card-t">Storico fatture</div><div class="card-d">Fatturato nei mesi prima di usare l'app, per la media dei 12 mesi e il totale dell'anno</div></div></div>
   <div class="card-c tw" style="padding-top:8px"><table><thead><tr><th>Mese</th><th class="r">Lordo €</th><th class="r">Netto €</th><th></th></tr></thead><tbody>${[...new Set([...Object.keys(c.incomeHistory || {}), ...Object.keys(c.incomeHistoryGross || {})])].sort().map(k => `<tr data-row="hist" data-id="${esc(k)}">${ROW.hist({m:k, v:c.incomeHistory?.[k], g:c.incomeHistoryGross?.[k]})}</tr>`).join("")}</tbody></table>
   <div style="margin-top:10px"><button class="btn b-outline b-sm" data-act="add-row" data-kind="hist">${ic("plus")}Aggiungi mese</button></div>
@@ -930,7 +937,11 @@ function readSettings() {
   const prev = (kind, id) => (S.cfg[kind] || []).find(x => x.id === id) || {};
   cfg.annual = rows("annual").filter(a => a.name.trim()).map(a => ({...prev("annual", a.id), id:a.id, name:a.name.trim(), amount:r2(parseAmt(a.amount) || 0), share:Math.max(0, Math.min(100, Number(a.share) || 0)), due:a.due ? Number(a.due) : null}));
   cfg.recurring = [...rows("recurring").filter(a => a.name.trim()).map(a => ({id:a.id, name:a.name.trim(), amount:r2(parseAmt(a.amount) || 0), cat:a.cat})), ...(S.cfg.recurring || []).filter(x => x.cat === SUBCAT)];
-  cfg.sources = rows("sources").filter(a => a.name.trim()).map(a => ({id:a.id, name:a.name.trim(), pct:Math.max(0, Math.min(100, Number(a.pct) || 0)), fixed:a.fixed ? r2(parseAmt(a.fixed) || 0) : null}));
+  cfg.sources = rows("sources").filter(a => a.name.trim()).map(a => {
+    const old = prev("sources", a.id), ch = {...(old.fixedChanges || {})}; delete ch[lastChange(old)];
+    const na = parseAmt(a.newAmt); if (/^\d{4}-\d{2}$/.test(a.from) && isFinite(na) && na > 0) ch[a.from] = r2(na);
+    return {id:a.id, name:a.name.trim(), pct:Math.max(0, Math.min(100, Number(a.pct) || 0)), fixed:a.fixed ? r2(parseAmt(a.fixed) || 0) : null, ...(Object.keys(ch).length ? {fixedChanges:ch} : {})};
+  });
   cfg.categories = rows("categories").filter(a => a.name.trim()).map(a => ({...prev("categories", a.id), id:a.id, name:a.name.trim(), group:a.group, fixed:!!a.fixed, defaultBudget:r2(parseAmt(a.defaultBudget) || 0), hidden:!a.active}));
   cfg.incomeHistory = {}; cfg.incomeHistoryGross = {}; rows("hist").forEach(h => { if (/^\d{4}-\d{2}$/.test(h.m)) { cfg.incomeHistory[h.m] = r2(parseAmt(h.v) || 0); cfg.incomeHistoryGross[h.m] = r2(parseAmt(h.g) || 0); } });
   rows("pot").forEach(p => { const k = cfg.categories.find(x => x.id === p.id); if (k) { k.potInitial = r2(parseAmt(p.init) || 0); k.pot = !!p.pot; } });
