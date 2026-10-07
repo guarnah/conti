@@ -193,13 +193,14 @@ input[type=checkbox]{width:16px;height:16px;accent-color:var(--primary)}
 
 /* bottom nav */
 .bnav{position:fixed;left:0;right:0;bottom:0;z-index:30;background:color-mix(in oklab,var(--card) 92%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-top:1px solid var(--border);padding-bottom:env(safe-area-inset-bottom,0px)}
-.bnav .in{display:grid;grid-template-columns:repeat(5,1fr);max-width:760px;margin:0 auto}
+.bnav .in{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));max-width:760px;margin:0 auto}
 .bnav button{border:0;background:none;padding:9px 2px 10px;font-size:11px;font-weight:500;color:var(--muted-foreground);display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer}
 .bnav button svg.i{width:20px;height:20px}
 .bnav button[aria-current="page"]{color:var(--foreground)}
 .fab{position:fixed;right:16px;bottom:calc(72px + env(safe-area-inset-bottom,0px));z-index:31;height:48px;padding:0 18px 0 14px;border-radius:999px;box-shadow:var(--shadow-lg);font-size:15px}
 .fab svg.i{width:20px;height:20px}
 body[data-view="budget"] .fab,body[data-view="altro"] .fab{display:none}
+body[data-view="salvadanai"] .hdr .month{visibility:hidden}
 
 /* drawer / dialog */
 .ovl{position:fixed;inset:0;z-index:50;background:var(--overlay);display:flex;align-items:flex-end;justify-content:center}
@@ -363,7 +364,7 @@ const ICONS = {
   piggy:'<path d="M11 17h3v2a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1v-3a3.16 3.16 0 0 0 2-2h1a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1h-1a5 5 0 0 0-2-4V3a4 4 0 0 0-3.2 1.6l-.3.4H11a6 6 0 0 0-6 6v1a5 5 0 0 0 2 4v3a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1z"/><path d="M16 10h.01M2 8v1a2 2 0 0 0 2 2h1"/>'
 };
 const ic = (n, cls = "") => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[n] || ""}</svg>`;
-const TABS = [{id:"mese", n:"Mese", i:"dash"}, {id:"movimenti", n:"Movimenti", i:"list"}, {id:"andamento", n:"Andamento", i:"chart"}, {id:"budget", n:"Budget", i:"wallet"}, {id:"altro", n:"Impostazioni", i:"sliders"}];
+const TABS = [{id:"mese", n:"Mese", i:"dash"}, {id:"movimenti", n:"Movimenti", i:"list"}, {id:"andamento", n:"Andamento", i:"chart"}, {id:"budget", n:"Budget", i:"wallet"}, {id:"salvadanai", n:"Salvadanai", i:"piggy"}, {id:"altro", n:"Impostazioni", s:"Altro", i:"sliders"}];
 
 /* ---------- utilità ---------- */
 const $ = (s, r = document) => r.querySelector(s);
@@ -528,7 +529,7 @@ function subscribeMonth() {
 /* ---------- render ---------- */
 function drawNav() {
   if (!$("#bnav").children.length) {
-    $("#bnav").innerHTML = TABS.map(t => `<button data-tab="${t.id}"><span class="pill">${ic(t.i)}</span>${t.n}</button>`).join("");
+    $("#bnav").innerHTML = TABS.map(t => `<button data-tab="${t.id}"><span class="pill">${ic(t.i)}</span>${t.s || t.n}</button>`).join("");
     $("#dtabs").innerHTML = TABS.map(t => `<button class="tab" role="tab" data-tab="${t.id}">${t.n}</button>`).join("");
   }
   document.querySelectorAll("#bnav [data-tab]").forEach(b => b.setAttribute("aria-current", S.view === b.dataset.tab ? "page" : "false"));
@@ -547,6 +548,7 @@ function render() {
   else if (S.view === "movimenti") html = viewMovimenti();
   else if (S.view === "andamento") html = viewAndamento();
   else if (S.view === "budget") html = viewBudget();
+  else if (S.view === "salvadanai") html = viewSalvadanai();
   else if (S.view === "altro") { if (!v.querySelector("#settings") || !S.settingsDirty) html = viewAltro(); }
   if (html != null) {
     const full = `<div class="stack" style="margin-top:20px">${html}</div>`;
@@ -623,13 +625,6 @@ function viewMese() {
     }).join(`<div class="sep"></div>`);
     h += `</div></div>`;
   }
-  const pl = pots().map(c => ({c, ...potStatus(c.id)})).filter(p => p.init || p.saved || p.used || Number(bud.cats?.[p.c.id]) > 0);
-  if (pl.length) {
-    h += `<div class="card"><div class="card-h"><div><div class="card-t row"><span class="gd g-ris"></span>Salvadanai</div><div class="card-d">Quanto hai da parte. Una spesa pagata da un salvadanaio non pesa sul mese.</div></div><span class="muted">${ic("piggy")}</span></div><div class="card-c flush">` +
-      pl.map(p => `<button class="crow" data-act="open-pot" data-id="${esc(p.c.id)}">
-        <div class="between"><span class="nm">${esc(p.c.name)}</span><span class="vl mono"><b style="color:${p.avail < 0 ? "var(--destructive)" : "var(--foreground)"}">${eur0(p.avail)}</b></span></div>
-        <div class="xs muted">${esc([p.init ? "saldo iniziale " + eur0(p.init) : "", "messi da parte " + eur0(p.saved), p.used ? "usati " + eur0(p.used) : ""].filter(Boolean).join(" · "))}</div></button>`).join(`<div class="sep"></div>`) + `</div></div>`;
-  }
   if ((S.cfg.annual || []).length) {
     const f = fundStatus();
     h += `<div class="card"><div class="card-h"><div><div class="card-t row"><span class="gd g-fondo"></span>Fondo spese annuali</div><div class="card-d">Accantoni <span class="mono">${eur(monthlyAccrualAll())}</span> al mese (abbonamenti annuali inclusi), già conteggiati nelle uscite</div></div><span class="muted">${ic("piggy")}</span></div>
@@ -696,15 +691,29 @@ function viewTag() {
   }).join("") + `</div></div>`;
   return h;
 }
+function viewSalvadanai() {
+  if (S.potView) return viewPot();
+  const pl = pots().map(c => ({c, ...potStatus(c.id)}));
+  const tot = pl.reduce((a, p) => a + p.avail, 0);
+  let h = `<div><h1 class="pt">Salvadanai</h1><p class="muted sm">Quanto hai da parte. Una spesa pagata da un salvadanaio non pesa sul budget del mese.</p></div>`;
+  if (!pl.length) return h + `<div class="card empty">${ic("piggy")}<div>Nessun salvadanaio. Aggiungi una categoria nell'area Risparmio in Impostazioni.</div></div>`;
+  h += `<div class="card hero"><div class="card-c stack" style="gap:14px"><div><div class="lbl">Totale da parte</div><div class="big mono">${eur(tot)}</div><div class="muted sm" style="margin-top:4px">${pl.length} ${pl.length === 1 ? "salvadanaio" : "salvadanai"}</div></div>
+    ${tot > 0 ? `<div class="stack" style="gap:10px">${pl.filter(p => p.avail > 0).map(p => `<div class="stack" style="gap:5px"><div class="between sm"><span>${esc(p.c.name)}</span><span class="mono muted">${Math.round(p.avail / tot * 100)}%</span></div><div class="prog"><i style="width:${p.avail / tot * 100}%;background:var(--chart-3)"></i></div></div>`).join("")}</div>` : ""}</div></div>`;
+  h += `<div class="card"><div class="card-c flush">` + pl.map(p => `<button class="crow" data-act="open-pot" data-id="${esc(p.c.id)}">
+      <div class="between"><span class="nm">${esc(p.c.name)}</span><span class="vl mono"><b style="color:${p.avail < 0 ? "var(--destructive)" : "var(--foreground)"}">${eur0(p.avail)}</b></span></div>
+      <div class="xs muted">${esc([p.init ? "saldo iniziale " + eur0(p.init) : "", "messi da parte " + eur0(p.saved), p.used ? "usati " + eur0(p.used) : ""].filter(Boolean).join(" · "))}</div></button>`).join(`<div class="sep"></div>`) + `</div></div>
+    <div class="row"><button class="btn b-outline b-sm" data-act="goto-pot-settings">${ic("sliders")}Saldi iniziali e categorie</button></div>`;
+  return h;
+}
 function viewPot() {
   const c = catById(S.potView); if (!c) { S.potView = ""; return viewMovimenti(); }
   const p = potStatus(c.id);
   const list = S.expTx.filter(t => t.cat === c.id || t.from === c.id).sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.created || 0) - (a.created || 0));
   let h = `<div class="row"><button class="btn b-ghost b-sm" data-act="close-pot"><svg class="i" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>Indietro</button></div>
   <div class="card hero"><div class="card-c stack" style="gap:14px">
-    <div><div class="lbl">Salvadanaio · ${esc(c.name)}</div><div class="big mono" style="color:${p.avail < 0 ? "var(--destructive)" : "var(--foreground)"}">${eur(p.avail)}</div><div class="muted sm" style="margin-top:4px">disponibile</div></div>
+    <div><div class="lbl">${esc(c.name)}</div><div class="big mono" style="color:${p.avail < 0 ? "var(--destructive)" : "var(--foreground)"}">${eur(p.avail)}</div><div class="muted sm" style="margin-top:4px">disponibile</div></div>
     <div class="stats"><div class="stat" style="padding:0"><div class="l">Saldo iniziale</div><div class="v mono">${eur0(p.init)}</div></div><div class="stat" style="padding:0"><div class="l">Messi da parte</div><div class="v mono">${eur0(p.saved)}</div></div><div class="stat" style="padding:0"><div class="l">Usati</div><div class="v mono">${eur0(p.used)}</div></div></div>
-    <p class="xs muted">Per usarlo, quando inserisci una spesa scegli "Pagata con: ${esc(c.name)}". Il saldo iniziale si cambia in Altro › Salvadanai.</p>
+    <p class="xs muted">Per usarlo, quando inserisci una spesa scegli "Pagata con: ${esc(c.name)}". Il saldo iniziale si cambia in Impostazioni › Salvadanai.</p>
   </div></div>`;
   if (!list.length) return h + `<div class="card empty">${ic("list")}<div>Ancora nessun movimento in questo salvadanaio.</div></div>`;
   const days = []; for (const t of list) { const d = days[days.length - 1]; if (d && d.date === t.date) d.items.push(t); else days.push({date:t.date, items:[t]}); }
@@ -716,7 +725,6 @@ function viewPot() {
   return h;
 }
 function viewMovimenti() {
-  if (S.potView) return viewPot();
   if (S.tagView) return viewTag();
   let list = S.tx;
   if (S.catFilter) list = list.filter(t => S.catFilter === "_inc" ? t.kind === "inc" : t.cat === S.catFilter);
@@ -1193,8 +1201,9 @@ document.addEventListener("click", async e => {
   if (act === "s-close") return closeSheet();
   if (act === "open-tag") { e.stopPropagation(); return openTag(a.dataset.tag); }
   if (act === "close-tag") return closeTag();
-  if (act === "open-pot") { S.potView = a.dataset.id; S.view = "movimenti"; S.enter = "fade"; window.scrollTo(0, 0); render(); return; }
-  if (act === "close-pot") { S.potView = ""; S.view = "mese"; S.enter = "fade"; window.scrollTo(0, 0); render(); return; }
+  if (act === "open-pot") { S.potView = a.dataset.id; S.view = "salvadanai"; S.enter = "fade"; window.scrollTo(0, 0); render(); return; }
+  if (act === "goto-pot-settings") { S.potView = ""; S.view = "altro"; window.scrollTo(0, 0); render(); setTimeout(() => document.querySelector('tr[data-row="pot"]')?.closest(".card")?.scrollIntoView({block:"start"}), 50); return; }
+  if (act === "close-pot") { S.potView = ""; S.view = "salvadanai"; S.enter = "fade"; window.scrollTo(0, 0); render(); return; }
   if (act === "open-fund") return openFund();
   if (act === "open-subs") return openSubs();
   if (act === "subs-close") return closeSubs();
