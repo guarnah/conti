@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1c1c1f"/><stop offset="1" stop-color="#0d0d0f"/></linearGradient>
+    <linearGradient id="pig" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffb3c7"/><stop offset="1" stop-color="#f27a9b"/></linearGradient>
+    <linearGradient id="coin" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffd970"/><stop offset="1" stop-color="#e9a92a"/></linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="0" fill="url(#bg)"/>
+  <!-- moneta -->
+  <g transform="translate(290 104)">
+    <ellipse cx="0" cy="0" rx="44" ry="44" fill="url(#coin)"/>
+    <ellipse cx="0" cy="0" rx="31" ry="31" fill="none" stroke="#c98a12" stroke-width="6" opacity=".55"/>
+    <text x="0" y="17" font-family="Arial, Helvetica, sans-serif" font-weight="700" font-size="46" text-anchor="middle" fill="#a8700a">€</text>
+  </g>
+  <!-- zampe -->
+  <rect x="160" y="356" width="46" height="66" rx="18" fill="#e86d90"/>
+  <rect x="302" y="356" width="46" height="66" rx="18" fill="#e86d90"/>
+  <!-- coda -->
+  <path d="M398 268c34-6 46 22 30 36-12 10-30-2-20-16" fill="none" stroke="#f27a9b" stroke-width="12" stroke-linecap="round"/>
+  <!-- orecchio dietro -->
+  <path d="M150 205l-14-50 48 22z" fill="#e86d90"/>
+  <!-- corpo -->
+  <ellipse cx="258" cy="282" rx="150" ry="118" fill="url(#pig)"/>
+  <!-- orecchio davanti -->
+  <path d="M178 192l-2-52 44 34z" fill="#ffc2d3"/>
+  <!-- fessura -->
+  <rect x="252" y="170" width="76" height="14" rx="7" fill="#b84a6a"/>
+  <!-- muso -->
+  <ellipse cx="114" cy="290" rx="40" ry="34" fill="#ff9cb7"/>
+  <ellipse cx="102" cy="290" rx="7" ry="10" fill="#b84a6a"/>
+  <ellipse cx="126" cy="290" rx="7" ry="10" fill="#b84a6a"/>
+  <!-- occhio -->
+  <circle cx="176" cy="246" r="11" fill="#2a1a20"/>
+  <circle cx="179" cy="242" r="3.5" fill="#fff"/>
+  <!-- riflesso -->
+  <path d="M300 214c40 6 70 30 80 56" fill="none" stroke="#fff" stroke-opacity=".35" stroke-width="12" stroke-linecap="round"/>
+</svg>
