@@ -1,5 +1,5 @@
 /* Conti — service worker: l'app si apre anche senza connessione. I dati passano da Supabase e non vengono messi in cache qui. */
-const VERSION = "conti-v2";
+const VERSION = "conti-v3";
 const SHELL = ["./", "index.html", "cloud.js", "vendor/supabase.js", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png", "icons/piggy.svg"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener("activate", e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== VERSION).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
