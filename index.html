@@ -1408,7 +1408,17 @@ window.__bootApp = boot; if (window.__db) boot();
   window.__onRecovery = () => { app.forEach(e => e.hidden = true); $("#login").hidden = true; $("#recover").hidden = false; };
   window.__showApp = showApp;
   window.__auth.init(showLogin);
-  if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+  /* aggiornamenti: controlla una nuova versione a ogni apertura e ricarica quando è pronta */
+  if ("serviceWorker" in navigator) {
+    const hadCtl = !!navigator.serviceWorker.controller; let reloading = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (!hadCtl || reloading) return;
+      const go = () => { if (document.querySelector(".ovl")) return setTimeout(go, 2000); reloading = true; location.reload(); }; go();
+    });
+    window.addEventListener("load", () => navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then(reg => {
+      document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") reg.update().catch(() => {}); });
+    }).catch(() => {}));
+  }
 })();
 </script>
 </body>
