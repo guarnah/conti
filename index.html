@@ -268,6 +268,54 @@ h1.pt{font-size:22px;font-weight:600;letter-spacing:-.02em}
 .login .msg{font-size:13px;min-height:18px}
 html,body{height:100%}
 </style>
+<style>
+/* ---- feel nativo su mobile ---- */
+html{-webkit-text-size-adjust:100%}
+html,body{overscroll-behavior-x:none}
+body{-webkit-tap-highlight-color:transparent}
+button,.btn,.trow,.crow,.tog,.tab,label,a{touch-action:manipulation}
+.btn,.tog,.trow,.crow,.tab,.bnav button{transition:transform .14s cubic-bezier(.2,.8,.2,1),background-color .18s,color .18s,box-shadow .18s}
+.btn:active,.tog:active{transform:scale(.96)}
+.trow:active,.crow:active{background:var(--muted)!important;transform:scale(.985)}
+.bnav button{position:relative;-webkit-user-select:none;user-select:none}
+.bnav .pill{display:grid;place-items:center;width:54px;height:30px;border-radius:999px;transition:background-color .25s,transform .2s cubic-bezier(.2,.8,.2,1)}
+.bnav button[aria-current="page"] .pill{background:color-mix(in oklab,var(--foreground) 9%,transparent)}
+.bnav button:active .pill{transform:scale(.88)}
+.fab{transition:transform .32s cubic-bezier(.32,.72,0,1),opacity .2s,background-color .18s}
+.fab.hide{transform:translateY(160%);opacity:0;pointer-events:none}
+.fab:active{transform:scale(.94)}
+.drawer{overscroll-behavior:contain;-webkit-overflow-scrolling:touch;will-change:transform}
+.handle{margin:8px auto 4px;cursor:grab}
+.drawer .handle-zone{position:sticky;top:0;z-index:2;background:var(--background);margin:0 -16px;padding:0 16px;touch-action:none}
+#view{overflow-x:hidden}
+@media (hover:none){
+  .b-outline:hover{background:var(--card)} .b-ghost:hover{background:transparent} .b-dghost:hover{background:transparent}
+  .b-default:hover{background:var(--primary)} .tog:hover{background:var(--card)} .tog[aria-pressed="true"]:hover{background:var(--primary)}
+  .trow:hover,.crow:hover{background:none} tbody tr:hover td{background:none}
+}
+@media (max-width:767px){
+  .inp,select.inp,td .inp{font-size:16px}
+  .inp{height:42px} td .inp{height:38px}
+  .btn{height:40px} .b-sm{height:36px} .b-icon.b-sm{width:36px}
+  .tog{height:36px;padding:0 13px;font-size:14px}
+  .trow{padding:11px 12px}
+  .tlist{height:40px}
+}
+@media (prefers-reduced-motion:no-preference){
+  .enter-fade{animation:vFade .24s cubic-bezier(.2,.8,.2,1)} @keyframes vFade{from{opacity:0;transform:translateY(8px)}}
+  .enter-left{animation:vLeft .28s cubic-bezier(.32,.72,0,1)} @keyframes vLeft{from{opacity:0;transform:translateX(32px)}}
+  .enter-right{animation:vRight .28s cubic-bezier(.32,.72,0,1)} @keyframes vRight{from{opacity:0;transform:translateX(-32px)}}
+  .ovl{animation:ovIn .28s ease-out} @keyframes ovIn{from{background-color:rgba(0,0,0,0)}}
+  .drawer{animation:dUp .42s cubic-bezier(.32,.72,0,1)} @keyframes dUp{from{transform:translateY(100%)}}
+  .ovl.closing{animation:ovOut .24s ease-in forwards;pointer-events:none} @keyframes ovOut{to{background-color:rgba(0,0,0,0)}}
+  .ovl.closing .drawer{animation:dDown .26s cubic-bezier(.4,0,1,1) forwards} @keyframes dDown{to{transform:translateY(100%)}}
+  .toast{animation:tIn .28s cubic-bezier(.32,.72,0,1)}
+  @media (min-width:768px){
+    .drawer{animation:dPop .22s cubic-bezier(.2,.8,.2,1)} @keyframes dPop{from{opacity:0;transform:scale(.97) translateY(6px)}}
+    .ovl.closing .drawer{animation:dPopOut .18s ease-in forwards} @keyframes dPopOut{to{opacity:0;transform:scale(.97)}}
+  }
+}
+</style>
 </head>
 <body>
 
@@ -468,8 +516,12 @@ function subscribeMonth() {
 
 /* ---------- render ---------- */
 function drawNav() {
-  $("#bnav").innerHTML = TABS.map(t => `<button data-tab="${t.id}" aria-current="${S.view === t.id ? "page" : "false"}">${ic(t.i)}${t.n}</button>`).join("");
-  $("#dtabs").innerHTML = TABS.map(t => `<button class="tab" role="tab" data-tab="${t.id}" aria-selected="${S.view === t.id}">${t.n}</button>`).join("");
+  if (!$("#bnav").children.length) {
+    $("#bnav").innerHTML = TABS.map(t => `<button data-tab="${t.id}"><span class="pill">${ic(t.i)}</span>${t.n}</button>`).join("");
+    $("#dtabs").innerHTML = TABS.map(t => `<button class="tab" role="tab" data-tab="${t.id}">${t.n}</button>`).join("");
+  }
+  document.querySelectorAll("#bnav [data-tab]").forEach(b => b.setAttribute("aria-current", S.view === b.dataset.tab ? "page" : "false"));
+  document.querySelectorAll("#dtabs [data-tab]").forEach(b => b.setAttribute("aria-selected", String(S.view === b.dataset.tab)));
 }
 function render() {
   drawNav();
@@ -485,11 +537,25 @@ function render() {
   else if (S.view === "andamento") html = viewAndamento();
   else if (S.view === "budget") html = viewBudget();
   else if (S.view === "altro") { if (!v.querySelector("#settings") || !S.settingsDirty) html = viewAltro(); }
-  if (html != null) v.innerHTML = `<div class="stack" style="margin-top:20px">${html}</div>`;
+  if (html != null) {
+    const full = `<div class="stack" style="margin-top:20px">${html}</div>`;
+    const heroOld = v.querySelector(".hero .big[data-v]"); const prev = heroOld ? {v:Number(heroOld.dataset.v), k:heroOld.dataset.k} : null;
+    if (full !== v.__html) { v.innerHTML = full; v.__html = full; }
+    if (S.enter && v.firstElementChild) { v.firstElementChild.classList.add("enter-" + S.enter); }
+    S.enter = "";
+    const heroNew = v.querySelector(".hero .big[data-v]");
+    if (heroNew && prev && prev.k === heroNew.dataset.k && Math.abs(prev.v - Number(heroNew.dataset.v)) > 0.004) tweenNumber(heroNew, prev.v, Number(heroNew.dataset.v));
+  }
   if (S.view === "andamento") loadTrend();
   if (keep) { const el = document.getElementById(keep); if (el) { el.focus(); try { if (sel != null) el.setSelectionRange(sel, sel); } catch {} } }
 }
 
+function tweenNumber(el, from, to) {
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  const t0 = performance.now(), d = 520; cancelAnimationFrame(el.__raf);
+  const step = now => { const k = Math.min(1, (now - t0) / d), e = 1 - Math.pow(1 - k, 3); el.textContent = eur(from + (to - from) * e); if (k < 1) el.__raf = requestAnimationFrame(step); };
+  el.__raf = requestAnimationFrame(step);
+}
 function progHtml(s, b, proj, lg) {
   const max = Math.max(b, s, proj || 0, 1);
   const cls = b <= 0 ? (s > 0 ? "over" : "") : s > b ? "over" : (proj && proj > b) ? "warn" : "";
@@ -509,13 +575,13 @@ function viewMese() {
     else if (rr < mn - 0.5) h += `<div class="alert" style="border-color:var(--destructive)"><div class="row" style="align-items:flex-start;color:var(--destructive)">${ic("info")}<div><div class="t">${esc(rn)} sotto il minimo: ${eur0(rr)} su ${eur0(mn)}</div><div class="sm">Riduci altre voci di ${eur0(mn - rr)} nella sezione Budget.</div></div></div><button class="btn b-outline b-sm" data-act="goto-budget">Budget</button></div>`; }
   h += `<div class="card hero"><div class="card-c stack" style="gap:14px">
     <div class="between" style="align-items:flex-start;flex-wrap:wrap"><div><div class="lbl">${r.isPast ? "Avanzo a fine mese" : "Disponibile questo mese"}</div>
-      <div class="big mono" style="color:${left < 0 ? "var(--destructive)" : "var(--foreground)"}">${eur(left)}</div></div>
+      <div class="big mono" data-v="${r2(left)}" data-k="${S.month}" style="color:${left < 0 ? "var(--destructive)" : "var(--foreground)"}">${eur(left)}</div></div>
       ${r.isCur ? `<span class="badge ${projLeft < 0 ? "bd-destructive" : "bd-success"}">${ic(projLeft < 0 ? "down" : "up")}<span class="mono">${sgn(projLeft)}</span> a fine mese</span>` : ""}</div>
     ${progHtml(r.spentTot, r.budTot, r.isCur ? r.projTot : 0, true)}
     <div class="between muted sm"><span>Speso <b class="mono" style="color:var(--foreground);font-weight:500">${eur0(r.spentTot)}</b> di <span class="mono">${eur0(r.budTot)}</span></span><span class="mono">${pct}%</span></div>
   </div></div>
   <div class="stats">
-    <div class="card stat"><div class="l"><span class="gd g-inc"></span>Entrate mensili</div><div class="v mono">${eur0(r.income)}</div></div>
+    <div class="card stat"><div class="l"><span class="gd g-inc"></span>Entrate</div><div class="v mono">${eur0(r.income)}</div></div>
     <div class="card stat"><div class="l"><span class="gd" style="background:var(--foreground)"></span>Uscite</div><div class="v mono">${eur0(r.spentTot)}</div></div>
     <div class="card stat"><div class="l"><span class="gd g-ris"></span>Al risparmio</div><div class="v mono">${eur0(r.rows.filter(x => x.c.group === "ris").reduce((a, x) => a + x.b, 0))}</div></div>
   </div>
@@ -815,6 +881,26 @@ function readSettings() {
 }
 
 /* ---------- drawer inserimento ---------- */
+function closeOverlay(id) {
+  const bg = document.getElementById(id); if (!bg) return;
+  bg.id = ""; bg.classList.add("closing");
+  const done = () => { bg.remove(); if (!document.querySelector(".ovl:not(.closing)")) document.body.style.overflow = ""; };
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) done(); else setTimeout(done, 260);
+}
+/* trascina in basso per chiudere un pannello */
+function enableSwipeClose(bg, close) {
+  const d = bg.querySelector(".drawer"); if (!d || matchMedia("(min-width:768px)").matches) return;
+  let y0 = null, x0 = 0, t0 = 0, dy = 0, active = false;
+  d.addEventListener("touchstart", e => { const inTop = e.target.closest(".handle-zone"); if (!inTop && d.scrollTop > 0) { y0 = null; return; } y0 = e.touches[0].clientY; x0 = e.touches[0].clientX; t0 = Date.now(); dy = 0; active = false; }, {passive:true});
+  d.addEventListener("touchmove", e => { if (y0 == null) return; dy = e.touches[0].clientY - y0; const dx = Math.abs(e.touches[0].clientX - x0);
+    if (!active && dy > 8 && dy > dx) { active = true; d.style.transition = "none"; }
+    if (active) { e.preventDefault(); d.style.transform = `translateY(${Math.max(0, dy)}px)`; bg.style.backgroundColor = `color-mix(in oklab, var(--overlay) ${Math.max(0, 100 - dy / 4)}%, transparent)`; } }, {passive:false});
+  d.addEventListener("touchend", () => { if (!active) { y0 = null; return; } const v = dy / Math.max(1, Date.now() - t0);
+    d.style.transition = "transform .3s cubic-bezier(.32,.72,0,1)"; bg.style.transition = "background-color .3s";
+    if (dy > 110 || v > 0.6) { d.style.transform = "translateY(100%)"; bg.style.backgroundColor = "transparent"; setTimeout(close, 200); }
+    else { d.style.transform = ""; bg.style.backgroundColor = ""; }
+    y0 = null; active = false; });
+}
 let sheetState = null;
 function usageOrder() {
   const cnt = {}; S.tx.forEach(t => { if (t.kind !== "inc") cnt[t.cat] = (cnt[t.cat] || 0) + 1; });
@@ -829,16 +915,16 @@ function openSheet(tx) {
   bg.innerHTML = `<div class="drawer" role="dialog" aria-modal="true" aria-labelledby="sTitle" id="sheet"></div>`;
   document.body.appendChild(bg); document.body.style.overflow = "hidden";
   bg.addEventListener("click", e => { if (e.target === bg) closeSheet(); });
-  drawSheet(true);
+  drawSheet(true); enableSwipeClose(bg, closeSheet);
 }
-function closeSheet() { $("#sheetBg")?.remove(); sheetState = null; document.body.style.overflow = ""; }
+function closeSheet() { closeOverlay("sheetBg"); sheetState = null; }
 function drawSheet(focus) {
   const st = sheetState; const el = $("#sheet"); if (!el) return;
   const isInc = st.kind === "inc";
   const src = srcById(st.src); const amt = parseAmt(st.amountStr);
   const net = isInc && src && isFinite(amt) ? amt * (src.pct / 100) : null;
   const tags = [...new Set([...(S.cfg.tags || []), ...S.tx.map(t => t.tag).filter(Boolean)])];
-  el.innerHTML = `<div class="handle"></div>
+  el.innerHTML = `<div class="handle-zone"><div class="handle"></div></div>
     <div class="between"><div><h2 id="sTitle" style="font-size:17px;font-weight:600">${st.id ? "Modifica movimento" : "Nuovo movimento"}</h2><p class="muted sm">${isInc ? "Scrivi il fatturato: il netto si calcola da solo" : "Importo, categoria e salva"}</p></div><button class="btn b-ghost b-icon b-sm" data-act="s-close" aria-label="Chiudi">${ic("x")}</button></div>
     <div class="tlist" role="tablist" aria-label="Tipo"><button class="tab" role="tab" data-s="kind" data-v="exp" aria-selected="${!isInc}">${ic("out")}Uscita</button><button class="tab" role="tab" data-s="kind" data-v="inc" aria-selected="${isInc}">${ic("in")}Entrata</button></div>
     <div class="stack" style="gap:2px"><div class="amt"><span>€</span><input id="sAmt" inputmode="decimal" autocomplete="off" placeholder="0,00" value="${esc(st.amountStr)}" aria-label="${isInc ? "Fatturato" : "Importo"}"></div>
@@ -894,9 +980,9 @@ function openFund() {
   bg.innerHTML = `<div class="drawer" role="dialog" aria-modal="true" aria-labelledby="fTitle" id="fund"></div>`;
   document.body.appendChild(bg); document.body.style.overflow = "hidden";
   bg.addEventListener("click", e => { if (e.target === bg) closeFund(); });
-  drawFund();
+  drawFund(); enableSwipeClose(bg, closeFund);
 }
-function closeFund() { $("#fundBg")?.remove(); fundState = null; document.body.style.overflow = ""; }
+function closeFund() { closeOverlay("fundBg"); fundState = null; }
 function drawFund() {
   const el = $("#fund"); if (!el || !fundState) return;
   const yr = curMonth().slice(0, 4);
@@ -905,7 +991,7 @@ function drawFund() {
   if (fundState.mode === "list") {
     const f = fundStatus();
     const list = [...(S.cfg.annual || [])].filter(a => !a.sub).sort((a, b) => mine(b) - mine(a));
-    el.innerHTML = `<div class="handle"></div>
+    el.innerHTML = `<div class="handle-zone"><div class="handle"></div></div>
       <div class="between"><div><h2 id="fTitle" style="font-size:17px;font-weight:600">Accantonamento spese annuali</h2><p class="muted sm"><span class="mono">${eur(monthlyAccrual())}</span> al mese · <span class="mono">${eur0(monthlyAccrual() * 12)}</span> all'anno · gli abbonamenti annuali sono in Abbonamenti</p></div><button class="btn b-ghost b-icon b-sm" data-act="fund-close" aria-label="Chiudi">${ic("x")}</button></div>
       <div class="stats"><div class="card stat"><div class="l">Accantonato</div><div class="v mono">${eur0(f.accrued)}</div></div><div class="card stat"><div class="l">Pagato</div><div class="v mono">${eur0(f.paid)}</div></div><div class="card stat"><div class="l">Disponibile</div><div class="v mono" style="color:${f.avail < 0 ? "var(--destructive)" : "var(--success)"}">${eur0(f.avail)}</div></div></div>
       <div class="card"><div class="card-c flush">${list.length ? list.map(a => {
@@ -919,7 +1005,7 @@ function drawFund() {
   const a = fundState.item;
   const months = [...Array(12)].map((_, i) => `<option value="${i + 1}" ${Number(a.due) === i + 1 ? "selected" : ""}>${esc(mLong(`2026-${pad(i + 1)}`))}</option>`).join("");
   const amt = parseAmt(a.amountStr), sh = Number(a.shareStr);
-  el.innerHTML = `<div class="handle"></div>
+  el.innerHTML = `<div class="handle-zone"><div class="handle"></div></div>
     <div class="between"><div class="row"><button class="btn b-ghost b-icon b-sm" data-act="fund-back" aria-label="Torna all'elenco"><svg class="i" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg></button><h2 id="fTitle" style="font-size:17px;font-weight:600">${a.isNew ? "Nuova voce" : "Modifica voce"}</h2></div><button class="btn b-ghost b-icon b-sm" data-act="fund-close" aria-label="Chiudi">${ic("x")}</button></div>
     <div class="field"><label for="fName">Nome</label><input id="fName" class="inp" placeholder="es. Bollo auto" value="${esc(a.name)}"></div>
     <div class="grid2"><div class="field"><label for="fAmt">Importo annuo €</label><input id="fAmt" class="inp mono" inputmode="decimal" placeholder="0,00" value="${esc(a.amountStr)}"></div>
@@ -959,9 +1045,9 @@ function openSubs() {
   bg.innerHTML = `<div class="drawer" role="dialog" aria-modal="true" aria-labelledby="abTitle" id="subs"></div>`;
   document.body.appendChild(bg); document.body.style.overflow = "hidden";
   bg.addEventListener("click", e => { if (e.target === bg) closeSubs(); });
-  drawSubs();
+  drawSubs(); enableSwipeClose(bg, closeSubs);
 }
-function closeSubs() { $("#subBg")?.remove(); subState = null; document.body.style.overflow = ""; }
+function closeSubs() { closeOverlay("subBg"); subState = null; }
 function drawSubs() {
   const el = $("#subs"); if (!el || !subState) return;
   if (subState.mode === "list") {
@@ -970,7 +1056,7 @@ function drawSubs() {
     const paid = new Set(S.tx.map(t => t.recId).filter(Boolean));
     const yr = curMonth().slice(0, 4);
     const paidYr = id => S.fundTx.filter(t => t.annId === id && (t.month || "").startsWith(yr)).reduce((a, t) => a + (Number(t.amount) || 0), 0);
-    el.innerHTML = `<div class="handle"></div>
+    el.innerHTML = `<div class="handle-zone"><div class="handle"></div></div>
       <div class="between"><div><h2 id="abTitle" style="font-size:17px;font-weight:600">Abbonamenti</h2><p class="muted sm"><span class="mono">${eur(subsMonthlyRec() + annSubsMonthly())}</span> al mese · <span class="mono">${eur0((subsMonthlyRec() + annSubsMonthly()) * 12)}</span> all'anno</p></div><button class="btn b-ghost b-icon b-sm" data-act="subs-close" aria-label="Chiudi">${ic("x")}</button></div>
       <div class="dayh" style="padding:0 2px"><span>Mensili · si registrano ogni mese</span><span class="mono">${eur(subsMonthlyRec())}</span></div>
       <div class="card"><div class="card-c flush">${list.length ? list.map(x => `<button class="trow" data-act="subs-edit" data-id="${esc(x.id)}" style="grid-template-columns:36px minmax(0,1fr) auto"><div class="ava g-ext">${ic("repeat")}</div><div class="grow"><div class="t1">${esc(x.name)}</div><div class="t2">${paid.has(x.id) ? `Registrato a ${esc(mLong(S.month))}` : `Da registrare a ${esc(mLong(S.month))}`}</div></div><div class="am mono">${eur(x.amount)}<span class="muted xs">/mese</span></div></button>`).join(`<div class="sep"></div>`) : `<div class="empty">Nessun abbonamento mensile.</div>`}</div></div>
@@ -982,7 +1068,7 @@ function drawSubs() {
   }
   const x = subState.item; const yearly = x.freq === "y";
   const months = [...Array(12)].map((_, i) => `<option value="${i + 1}" ${Number(x.due) === i + 1 ? "selected" : ""}>${esc(mLong(`2026-${pad(i + 1)}`))}</option>`).join("");
-  el.innerHTML = `<div class="handle"></div>
+  el.innerHTML = `<div class="handle-zone"><div class="handle"></div></div>
     <div class="between"><div class="row"><button class="btn b-ghost b-icon b-sm" data-act="subs-back" aria-label="Torna all'elenco"><svg class="i" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg></button><h2 id="abTitle" style="font-size:17px;font-weight:600">${x.isNew ? "Nuovo abbonamento" : "Modifica abbonamento"}</h2></div><button class="btn b-ghost b-icon b-sm" data-act="subs-close" aria-label="Chiudi">${ic("x")}</button></div>
     <div class="field"><label for="abName">Nome</label><input id="abName" class="inp" placeholder="es. Spotify" value="${esc(x.name)}"></div>
     <div class="field"><span class="lab">Si paga</span><div class="tlist" role="tablist" aria-label="Frequenza"><button class="tab" role="tab" data-act="subs-freq" data-v="m" aria-selected="${!yearly}">Ogni mese</button><button class="tab" role="tab" data-act="subs-freq" data-v="y" aria-selected="${yearly}">Una volta l'anno</button></div></div>
@@ -1042,9 +1128,9 @@ async function exportCsv(all) {
 /* ---------- eventi ---------- */
 document.addEventListener("click", async e => {
   const tab = e.target.closest("[data-tab]");
-  if (tab) { if (S.tagView) { S.unsubTag?.(); S.unsubTag = null; S.tagView = ""; S.tagTx = null; } S.view = tab.dataset.tab; S.settingsDirty = false; if (S.view !== "budget") S.budgetDraft = null; window.scrollTo(0, 0); render(); return; }
+  if (tab) { if (tab.dataset.tab !== S.view || S.tagView) S.enter = "fade"; if (S.tagView) { S.unsubTag?.(); S.unsubTag = null; S.tagView = ""; S.tagTx = null; } S.view = tab.dataset.tab; S.settingsDirty = false; if (S.view !== "budget") S.budgetDraft = null; window.scrollTo(0, 0); render(); return; }
   if (e.target.closest("#fab") || e.target.closest("#newBtn")) { if (S.cfg) openSheet(); return; }
-  if (e.target.closest("#prevM") || e.target.closest("#nextM")) { S.month = addMonth(S.month, e.target.closest("#prevM") ? -1 : 1); S.settingsDirty = false; S.tagAll = null; subscribeMonth(); render(); return; }
+  if (e.target.closest("#prevM") || e.target.closest("#nextM")) { S.enter = e.target.closest("#prevM") ? "right" : "left"; S.month = addMonth(S.month, e.target.closest("#prevM") ? -1 : 1); S.settingsDirty = false; S.tagAll = null; subscribeMonth(); render(); return; }
   const s = e.target.closest("[data-s]");
   if (s && sheetState) { readSheetInputs(); sheetState[s.dataset.s] = s.dataset.v; if (s.dataset.s === "kind") { sheetState.cat = ""; sheetState.src = ""; }
     if (s.dataset.s === "src") { const src = srcById(s.dataset.v); if (src?.fixed && !sheetState.amountStr) sheetState.amountStr = String(src.fixed).replace(".", ","); }
@@ -1130,6 +1216,15 @@ document.addEventListener("change", e => {
   if (e.target.id === "restSel") { const cfg = structuredClone(S.cfg); cfg.restCat = e.target.value; S.cfg = cfg; render(); S.db.doc("config/main").set(cfg).then(() => toast("Il resto ora va in " + catById(cfg.restCat)?.name)).catch(fail); }
   if (e.target.id === "tcat") { S.trendCat = e.target.value; drawCatTrend(); }
 });
+/* nasconde il pulsante Aggiungi scorrendo in giù, lo mostra scorrendo in su */
+(() => { let last = 0, tick = false; addEventListener("scroll", () => { if (tick) return; tick = true; requestAnimationFrame(() => { const y = scrollY, f = $("#fab"); if (f) { if (y > last + 6 && y > 120) f.classList.add("hide"); else if (y < last - 6 || y < 60) f.classList.remove("hide"); } last = y; tick = false; }); }, {passive:true}); })();
+/* scorri a destra/sinistra per cambiare mese */
+(() => { let x0, y0, t0;
+  $("#view").addEventListener("touchstart", e => { if (e.touches.length !== 1 || e.target.closest("input,select,textarea,.chart,.tw")) { x0 = null; return; } x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; t0 = Date.now(); }, {passive:true});
+  $("#view").addEventListener("touchend", e => { if (x0 == null || S.tagView || !["mese", "movimenti", "budget"].includes(S.view) || document.querySelector(".ovl")) return;
+    const dx = e.changedTouches[0].clientX - x0, dy = e.changedTouches[0].clientY - y0;
+    if (Math.abs(dx) > 70 && Math.abs(dy) < 45 && Date.now() - t0 < 600) (dx < 0 ? $("#nextM") : $("#prevM")).click();
+    x0 = null; }, {passive:true}); })();
 document.addEventListener("keydown", e => {
   if (subState) { if (e.key === "Escape") closeSubs(); if (e.key === "Enter" && e.target.tagName === "INPUT" && subState.mode === "edit") { e.preventDefault(); saveSub(); } return; }
   if (fundState) { if (e.key === "Escape") closeFund(); if (e.key === "Enter" && e.target.tagName === "INPUT" && fundState.mode === "edit") { e.preventDefault(); saveFundItem(); } return; }
