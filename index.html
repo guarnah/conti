@@ -401,17 +401,38 @@ const setStatus = (s, k = "ok") => { const el = $("#status"); el.textContent = s
 /* ---------- configurazione derivata ---------- */
 const cats = () => (S.cfg?.categories || []).filter(c => !c.hidden);
 const catById = id => (S.cfg?.categories || []).find(c => c.id === id);
-const srcById = id => (S.cfg?.sources || []).find(s => s.id === id);
+/* entrata extra (Vinted, rimborsi, regali…): nessuna tassa, conta solo nel mese in cui arriva */
+const EXTRA = {id:"extra", name:"Entrata extra", pct:100, kind:"extra"};
+const srcById = id => (S.cfg?.sources || []).find(s => s.id === id) || (id === "extra" ? EXTRA : undefined);
+const isExtraSrc = id => srcById(id)?.kind === "extra";
 const annualById = id => (S.cfg?.annual || []).find(a => a.id === id);
 const mineA = a => (Number(a.amount) || 0) * ((a.share ?? 100) / 100);
 const started = m => !!(S.cfg?.startMonth && m >= S.cfg.startMonth);
 /* accantonamento delle spese annuali che NON sono abbonamenti (riga "Spese annuali") */
-const monthlyAccrual = () => (S.cfg?.annual || []).filter(a => !a.sub).reduce((s, a) => s + mineA(a) / 12, 0);
+/* durata del periodo: 12 per le spese annuali, 3/6/12 per gli abbonamenti non mensili */
+const perMonths = a => Number(a.months) || 12;
+const accrualOf = a => mineA(a) / perMonths(a);
+const FREQS = [{m:1, n:"Mensile", per:"al mese"}, {m:3, n:"Trimestrale", per:"ogni 3 mesi"}, {m:6, n:"Semestrale", per:"ogni 6 mesi"}, {m:12, n:"Annuale", per:"l'anno"}];
+const freqOf = m => FREQS.find(f => f.m === Number(m)) || FREQS[3];
+const addMonthsISO = (d, k) => { const [y, mo, dd] = d.split("-").map(Number); const t = new Date(y, mo - 1 + k, 1); return isoOf(new Date(t.getFullYear(), t.getMonth(), Math.min(dd, new Date(t.getFullYear(), t.getMonth() + 1, 0).getDate()))); };
+const addDaysISO = (d, k) => { const [y, mo, dd] = d.split("-").map(Number); return isoOf(new Date(y, mo - 1, dd + k)); };
+const fmtDateS = iso => iso.slice(0, 4) === todayISO().slice(0, 4) ? new Intl.DateTimeFormat("it-IT", {day:"numeric", month:"short"}).format(new Date(iso + "T12:00:00")) : fmtDate(iso);
+const fmtDate = iso => new Intl.DateTimeFormat("it-IT", {day:"numeric", month:"short", year:"numeric"}).format(new Date(iso + "T12:00:00"));
+/* prossima scadenza di un abbonamento, a partire dalla data indicata e ripetendo il periodo */
+function nextRenew(x) {
+  const base = x.renew || (x.due ? `${curMonth().slice(0, 4)}-${pad(x.due)}-01` : ""); if (!base) return "";
+  const step = x.cat === SUBCAT ? 1 : perMonths(x), today = todayISO();
+  for (let k = 0; k < 1200; k++) { const d = addMonthsISO(base, k * step); if (d >= today) return d; }
+  return base;
+}
+/* pagato per il periodo in corso: una spesa dal fondo dopo l'ultima scadenza (con 20 giorni di anticipo) */
+const subPaidNow = a => { const n = nextRenew(a); if (!n) return false; const from = addDaysISO(addMonthsISO(n, -perMonths(a)), -20); return S.fundTx.some(t => t.annId === a.id && (t.date || "") >= from); };
+const monthlyAccrual = () => (S.cfg?.annual || []).filter(a => !a.sub).reduce((s, a) => s + accrualOf(a), 0);
 /* tutto quello che entra nel fondo (anche gli abbonamenti annuali) */
-const monthlyAccrualAll = () => (S.cfg?.annual || []).reduce((s, a) => s + mineA(a) / 12, 0);
+const monthlyAccrualAll = () => (S.cfg?.annual || []).reduce((s, a) => s + accrualOf(a), 0);
 const accrualFor = m => started(m) ? monthlyAccrual() : 0;
 const annSubs = () => (S.cfg?.annual || []).filter(a => a.sub);
-const annSubsMonthly = () => annSubs().reduce((s, a) => s + mineA(a) / 12, 0);
+const annSubsMonthly = () => annSubs().reduce((s, a) => s + accrualOf(a), 0);
 const SUBCAT = "abbonamenti";
 const subs = () => (S.cfg?.recurring || []).filter(x => x.cat === SUBCAT);
 const subsMonthlyRec = () => subs().reduce((a, x) => a + (Number(x.amount) || 0), 0);
@@ -457,18 +478,19 @@ const fixedMonthly = m => (S.cfg?.sources || []).reduce((a, x) => a + fixedAt(x,
 function invoicedIn(m) {
   const start = S.cfg?.startMonth || "0000-00";
   if (m < start) return Number(S.cfg?.incomeHistory?.[m]) || 0;
-  return S.incTx.filter(t => t.month === m && !isFixedSrc(t.src)).reduce((a, t) => a + (Number(t.amount) || 0), 0);
+  return S.incTx.filter(t => t.month === m && !isFixedSrc(t.src) && !isExtraSrc(t.src)).reduce((a, t) => a + (Number(t.amount) || 0), 0);
 }
 function grossIn(m) {
   const start = S.cfg?.startMonth || "0000-00";
   if (m < start) return Number(S.cfg?.incomeHistoryGross?.[m]) || 0;
-  return S.incTx.filter(t => t.month === m && !isFixedSrc(t.src)).reduce((a, t) => a + (Number(t.gross) || 0), 0);
+  return S.incTx.filter(t => t.month === m && !isFixedSrc(t.src) && !isExtraSrc(t.src)).reduce((a, t) => a + (Number(t.gross) || 0), 0);
 }
 /* entrate mensili = importi fissi (borsa) + netto fatturato negli ultimi 12 mesi / 12 */
 function incomeFor(m) {
   let pool = 0; for (let k = addMonth(m, -11); k <= m; k = addMonth(k, 1)) pool += invoicedIn(k);
   const fixed = fixedMonthly(m);
-  return {fixed, pool, monthly:fixed + pool / 12, invoiced:invoicedIn(m)};
+  const extra = S.incTx.filter(t => t.month === m && isExtraSrc(t.src)).reduce((a, t) => a + (Number(t.amount) || 0), 0);
+  return {fixed, pool, extra, monthly:fixed + pool / 12 + extra, invoiced:invoicedIn(m)};
 }
 
 function budgetFor() {
@@ -613,7 +635,7 @@ function viewMese() {
     <div class="card stat"><div class="l"><span class="gd" style="background:var(--foreground)"></span>Uscite</div><div class="v mono">${eur0(r.spentTot)}</div></div>
     <div class="card stat"><div class="l"><span class="gd g-ris"></span>Al risparmio</div><div class="v mono">${eur0(r.rows.filter(x => x.c.group === "ris").reduce((a, x) => a + x.b, 0))}</div></div>
   </div>
-  <p class="xs muted" style="margin-top:-6px">Entrate mensili = fissi <span class="mono">${eur0(r.inc.fixed)}</span> + fatture degli ultimi 12 mesi <span class="mono">${eur0(r.inc.pool)}</span> ÷ 12${r.inc.invoiced ? ` · fatturato netto questo mese <span class="mono">${eur0(r.inc.invoiced)}</span>` : ""}. ${restCat() ? `Tutto quello che non è a budget va in ${esc(catById(restCat()).name)}, quindi il disponibile è entrate mensili − uscite.` : ""}</p>`;
+  <p class="xs muted" style="margin-top:-6px">Entrate mensili = fissi <span class="mono">${eur0(r.inc.fixed)}</span> + fatture degli ultimi 12 mesi <span class="mono">${eur0(r.inc.pool)}</span> ÷ 12${r.inc.extra ? ` + extra del mese <span class="mono">${eur0(r.inc.extra)}</span>` : ""}${r.inc.invoiced ? ` · fatturato netto questo mese <span class="mono">${eur0(r.inc.invoiced)}</span>` : ""}. ${restCat() ? `Tutto quello che non è a budget va in ${esc(catById(restCat()).name)}, quindi il disponibile è entrate mensili − uscite.` : ""}</p>`;
   const rec = (S.cfg.recurring || []).filter(x => !S.tx.some(t => t.recId === x.id));
   if (rec.length && S.txLoaded && S.month <= curMonth() && started(S.month)) {
     h += `<div class="card"><div class="card-h"><div><div class="card-t">Ricorrenti da registrare</div><div class="card-d">${rec.length} ${rec.length === 1 ? "voce" : "voci"} di questo mese</div></div><button class="btn b-default b-sm" data-act="rec-all">${ic("check")}Registra tutte</button></div><div class="card-c flush">` +
@@ -645,7 +667,7 @@ function viewMese() {
     h += `<div class="card"><div class="card-h"><div><div class="card-t row"><span class="gd g-fondo"></span>Fondo spese annuali</div><div class="card-d">Accantoni <span class="mono">${eur(monthlyAccrualAll())}</span> al mese (abbonamenti annuali inclusi), già conteggiati nelle uscite</div></div><span class="muted">${ic("piggy")}</span></div>
       <div class="card-c stack" style="gap:12px">
       <div class="stats"><div class="stat" style="padding:0"><div class="l">Accantonato</div><div class="v mono">${eur0(f.accrued)}</div></div><div class="stat" style="padding:0"><div class="l">Pagato</div><div class="v mono">${eur0(f.paid)}</div></div><div class="stat" style="padding:0"><div class="l">Disponibile</div><div class="v mono" style="color:${f.avail < 0 ? "var(--destructive)" : "var(--success)"}">${eur0(f.avail)}</div></div></div>
-      ${f.upcoming.length ? `<div class="stack" style="gap:6px">${f.upcoming.map(a => `<div class="between sm"><span class="row">${ic("cal")}${esc(a.name)}</span><span class="row"><span class="badge bd-outline">${esc(mShort(a.dueM))}</span><span class="mono">${eur0(a.mine)}</span></span></div>`).join("")}</div>` : ""}
+      ${f.upcoming.length ? `<div class="stack" style="gap:6px">${f.upcoming.map(a => `<div class="between sm"><span class="row">${ic("cal")}${esc(a.name)}</span><span class="row"><span class="badge bd-outline">${esc(a.dueD ? fmtDate(a.dueD) : mShort(a.dueM))}</span><span class="mono">${eur0(a.mine)}</span></span></div>`).join("")}</div>` : ""}
       <div class="between" style="flex-wrap:wrap"><p class="xs muted grow">Quando paghi una di queste spese, registrala come "Spesa annuale": esce dal fondo e non pesa sul mese.</p><button class="btn b-outline b-sm" data-act="open-fund">Gestisci voci</button></div></div></div>`;
   }
   return h;
@@ -657,7 +679,8 @@ function fundStatus() {
   const accrued = (Number(S.cfg.fundInitial) || 0) + monthlyAccrualAll() * n;
   const paid = S.fundTx.reduce((a, t) => a + (Number(t.amount) || 0), 0);
   const yr = now.slice(0, 4);
-  const upcoming = (S.cfg.annual || []).filter(a => a.due).map(a => {
+  const upcoming = (S.cfg.annual || []).filter(a => a.due || a.renew).map(a => {
+    if (a.renew) { const n = nextRenew(a); return {...a, dueM:n.slice(0, 7), dueD:n, paidYr:subPaidNow(a), mine:mineA(a)}; }
     let dueM = `${yr}-${pad(a.due)}`; if (dueM < now) dueM = addMonth(dueM, 12);
     const paidYr = S.fundTx.some(t => t.annId === a.id && t.month && t.month.slice(0, 4) === dueM.slice(0, 4));
     return {...a, dueM, paidYr, mine:(Number(a.amount) || 0) * ((a.share ?? 100) / 100)};
@@ -996,19 +1019,19 @@ function drawSheet(focus) {
   const net = isInc && src && isFinite(amt) ? amt * (src.pct / 100) : null;
   const tags = [...new Set([...(S.cfg.tags || []), ...S.tx.map(t => t.tag).filter(Boolean)])];
   el.innerHTML = `<div class="handle-zone"><div class="handle"></div></div>
-    <div class="between"><div><h2 id="sTitle" style="font-size:17px;font-weight:600">${st.id ? "Modifica movimento" : "Nuovo movimento"}</h2><p class="muted sm">${isInc ? "Scrivi il fatturato: il netto si calcola da solo" : "Importo, categoria e salva"}</p></div><button class="btn b-ghost b-icon b-sm" data-act="s-close" aria-label="Chiudi">${ic("x")}</button></div>
+    <div class="between"><div><h2 id="sTitle" style="font-size:17px;font-weight:600">${st.id ? "Modifica movimento" : "Nuovo movimento"}</h2><p class="muted sm">${isInc ? (src?.kind === "extra" ? "Un'entrata senza tasse, ad esempio una vendita su Vinted" : "Scrivi il fatturato: il netto si calcola da solo") : "Importo, categoria e salva"}</p></div><button class="btn b-ghost b-icon b-sm" data-act="s-close" aria-label="Chiudi">${ic("x")}</button></div>
     <div class="tlist" role="tablist" aria-label="Tipo"><button class="tab" role="tab" data-s="kind" data-v="exp" aria-selected="${!isInc}">${ic("out")}Uscita</button><button class="tab" role="tab" data-s="kind" data-v="inc" aria-selected="${isInc}">${ic("in")}Entrata</button></div>
     <div class="stack" style="gap:2px"><div class="amt"><span>€</span><input id="sAmt" inputmode="decimal" autocomplete="off" placeholder="0,00" value="${esc(st.amountStr)}" aria-label="${isInc ? "Fatturato" : "Importo"}"></div>
-    ${isInc ? `<p class="xs muted" style="text-align:center">La borsa è già contata in automatico ogni mese.</p><div class="muted sm" id="sNet" style="text-align:center">${src ? (net != null ? `Netto (${src.pct}%) <b class="mono" style="color:var(--foreground)">${eur(net)}</b>` : `Netto al ${src.pct}% del fatturato`) : "Scegli la fonte"}</div>` : ""}</div>
+    ${isInc ? `<p class="xs muted" style="text-align:center">La borsa è già contata in automatico ogni mese.</p><div class="muted sm" id="sNet" style="text-align:center">${src?.kind === "extra" ? "Nessuna tassa · conta solo in questo mese" : src ? (net != null ? `Netto (${src.pct}%) <b class="mono" style="color:var(--foreground)">${eur(net)}</b>` : `Netto al ${src.pct}% del fatturato`) : "Scegli la fonte"}</div>` : ""}</div>
     <div class="field"><span class="lab">${isInc ? "Fonte" : "Categoria"}</span><div class="togs" role="group" aria-label="${isInc ? "Fonte" : "Categoria"}">
-      ${isInc ? (S.cfg.sources || []).filter(s => !(Number(s.fixed) > 0)).map(s => `<button class="tog" data-s="src" data-v="${esc(s.id)}" aria-pressed="${st.src === s.id}">${esc(s.name)}</button>`).join("")
+      ${isInc ? [...(S.cfg.sources || []).filter(s => !(Number(s.fixed) > 0)), EXTRA].map(s => `<button class="tog" data-s="src" data-v="${esc(s.id)}" aria-pressed="${st.src === s.id}">${s.kind === "extra" ? `<span class="gd g-inc"></span>Extra senza tasse` : esc(s.name)}</button>`).join("")
         : usageOrder().map(c => `<button class="tog" data-s="cat" data-v="${esc(c.id)}" aria-pressed="${st.cat === c.id}"><span class="gd g-${c.group}"></span>${esc(c.name)}</button>`).join("") + `<button class="tog" data-s="cat" data-v="fondo" aria-pressed="${st.cat === "fondo"}"><span class="gd g-fondo"></span>Spesa annuale</button>`}
     </div></div>
     ${canFrom(st) ? `<div class="field"><span class="lab">Pagata con</span><div class="togs" role="group" aria-label="Pagata con"><button class="tog" data-s="from" data-v="" aria-pressed="${!st.from}">Budget del mese</button>${pots().map(c => `<button class="tog" data-s="from" data-v="${esc(c.id)}" aria-pressed="${st.from === c.id}"><span class="gd g-ris"></span>${esc(c.name)} <span class="mono muted">${eur0(potAvailFor(st, c.id))}</span></button>`).join("")}</div><p class="xs muted" id="sFrom">${fromHint(st)}</p></div>` : ""}
     ${!isInc && st.cat === "fondo" ? `<div class="field"><label for="sAnn">Quale spesa annuale?</label><select id="sAnn" class="inp"><option value="">Scegli…</option>${(S.cfg.annual || []).map(a => `<option value="${esc(a.id)}" ${st.annId === a.id ? "selected" : ""}>${esc(a.name)}${a.sub ? " (abbonamento)" : ""}</option>`).join("")}</select></div>` : ""}
     <div class="grid2"><div class="field"><label for="sDate">Data</label><input id="sDate" class="inp" type="date" value="${esc(st.date)}"></div>
       <div class="field"><label for="sTag">Tag</label><input id="sTag" class="inp" list="tagList" placeholder="es. Londra" value="${esc(st.tag)}"><datalist id="tagList">${tags.map(t => `<option value="${esc(t)}">`).join("")}</datalist></div></div>
-    <div class="field"><label for="sNote">Nota</label><input id="sNote" class="inp" placeholder="${isInc ? "es. fattura n. 12" : "es. pranzo con colleghi"}" value="${esc(st.note)}"></div>
+    <div class="field"><label for="sNote">Nota</label><input id="sNote" class="inp" placeholder="${isInc ? (src?.kind === "extra" ? "es. Vinted, giacca" : "es. fattura n. 12") : "es. pranzo con colleghi"}" value="${esc(st.note)}"></div>
     <div class="dfoot">
       ${st.id ? `<button class="btn ${st.confirmDel ? "b-destructive" : "b-dghost"}" data-act="s-del">${ic("trash")}${st.confirmDel ? "Conferma" : "Elimina"}</button>` : ""}
       <span class="grow"></span><button class="btn b-outline" data-act="s-close">Annulla</button><button class="btn b-default" data-act="s-save" id="sSave">Salva</button>
@@ -1036,7 +1059,7 @@ async function saveSheet() {
   const doc = {kind:st.kind, date:st.date, month:st.date.slice(0, 7), note:st.note.trim(), tag:st.tag, created:st.created || Date.now()};
   if (st.kind === "inc") {
     const src = srcById(st.src); if (!src) return toast("Scegli la fonte");
-    Object.assign(doc, {src:src.id, gross:r2(amt), amount:r2(amt * src.pct / 100), pct:src.pct, cat:"_inc"});
+    Object.assign(doc, {src:src.id, amount:r2(amt * src.pct / 100), pct:src.pct, cat:"_inc"}); if (src.kind !== "extra") doc.gross = r2(amt);
   } else {
     if (!st.cat) return toast("Scegli una categoria");
     if (st.cat === "fondo" && !st.annId) return toast("Scegli quale spesa annuale");
@@ -1187,32 +1210,37 @@ function drawSubs() {
   const el = $("#subs"); if (!el || !subState) return;
   if (subState.mode === "list") {
     const list = [...subs()].sort((a, b) => b.amount - a.amount);
-    const alist = [...annSubs()].sort((a, b) => mineA(b) - mineA(a));
+    const alist = [...annSubs()].sort((a, b) => accrualOf(b) - accrualOf(a));
     const paid = new Set(S.tx.map(t => t.recId).filter(Boolean));
     const yr = curMonth().slice(0, 4);
     const paidYr = id => S.fundTx.filter(t => t.annId === id && (t.month || "").startsWith(yr)).reduce((a, t) => a + (Number(t.amount) || 0), 0);
     el.innerHTML = `<div class="handle-zone"><div class="handle"></div></div>
       <div class="between"><div><h2 id="abTitle" style="font-size:17px;font-weight:600">Abbonamenti</h2><p class="muted sm"><span class="mono">${eur(subsMonthlyRec() + annSubsMonthly())}</span> al mese · <span class="mono">${eur0((subsMonthlyRec() + annSubsMonthly()) * 12)}</span> all'anno</p></div><button class="btn b-ghost b-icon b-sm" data-act="subs-close" aria-label="Chiudi">${ic("x")}</button></div>
       <div class="dayh" style="padding:0 2px"><span>Mensili · si registrano ogni mese</span><span class="mono">${eur(subsMonthlyRec())}</span></div>
-      <div class="card"><div class="card-c flush">${list.length ? list.map(x => `<button class="trow" data-act="subs-edit" data-id="${esc(x.id)}" style="grid-template-columns:36px minmax(0,1fr) auto"><div class="ava g-ext">${ic("repeat")}</div><div class="grow"><div class="t1">${esc(x.name)}</div><div class="t2">${paid.has(x.id) ? `Registrato a ${esc(mLong(S.month))}` : `Da registrare a ${esc(mLong(S.month))}`}</div></div><div class="am mono">${eur(x.amount)}<span class="muted xs">/mese</span></div></button>`).join(`<div class="sep"></div>`) : `<div class="empty">Nessun abbonamento mensile.</div>`}</div></div>
-      <div class="dayh" style="padding:0 2px"><span>Annuali · accantonati ogni mese</span><span class="mono">${eur(annSubsMonthly())}/mese</span></div>
-      <div class="card"><div class="card-c flush">${alist.length ? alist.map(a => { const p = paidYr(a.id); return `<button class="trow" data-act="subs-edit" data-id="${esc(a.id)}" style="grid-template-columns:36px minmax(0,1fr) auto"><div class="ava g-fondo">${ic("cal")}</div><div class="grow"><div class="t1 row" style="gap:6px"><span style="overflow:hidden;text-overflow:ellipsis">${esc(a.name)}</span>${p ? `<span class="badge bd-success">pagato</span>` : ""}</div><div class="t2">${esc([eur0(a.amount) + " l'anno", (a.share ?? 100) !== 100 ? `tua quota ${a.share}%` : "", a.due ? "scade a " + mLong(`2026-${pad(a.due)}`) : ""].filter(Boolean).join(" · "))}</div></div><div class="am mono">${eur(mineA(a) / 12)}<span class="muted xs">/mese</span></div></button>`; }).join(`<div class="sep"></div>`) : `<div class="empty">Nessun abbonamento annuale.</div>`}</div></div>
-      <p class="xs muted">Il budget di "Abbonamenti mensili" è la somma di tutti e due i gruppi. Quelli annuali li paghi una volta: quando succede, registra la spesa come "Spesa annuale" scegliendo l'abbonamento, così esce dal fondo.</p>
+      <div class="card"><div class="card-c flush">${list.length ? list.map(x => `<button class="trow" data-act="subs-edit" data-id="${esc(x.id)}" style="grid-template-columns:36px minmax(0,1fr) auto"><div class="ava g-ext">${ic("repeat")}</div><div class="grow"><div class="t1">${esc(x.name)}</div><div class="t2">${esc([paid.has(x.id) ? (nextRenew(x) ? "Registrato" : `Registrato a ${mLong(S.month)}`) : (nextRenew(x) ? "Da registrare" : `Da registrare a ${mLong(S.month)}`), nextRenew(x) ? "scade il " + fmtDateS(nextRenew(x)) : ""].filter(Boolean).join(" · "))}</div></div><div class="am mono">${eur(x.amount)}<span class="muted xs">/mese</span></div></button>`).join(`<div class="sep"></div>`) : `<div class="empty">Nessun abbonamento mensile.</div>`}</div></div>
+      <div class="dayh" style="padding:0 2px"><span>Trimestrali, semestrali e annuali · accantonati ogni mese</span><span class="mono">${eur(annSubsMonthly())}/mese</span></div>
+      <div class="card"><div class="card-c flush">${alist.length ? alist.map(a => { const p = a.renew ? subPaidNow(a) : paidYr(a.id); const nr = nextRenew(a); return `<button class="trow" data-act="subs-edit" data-id="${esc(a.id)}" style="grid-template-columns:36px minmax(0,1fr) auto"><div class="ava g-fondo">${ic("cal")}</div><div class="grow"><div class="t1 row" style="gap:6px"><span style="overflow:hidden;text-overflow:ellipsis">${esc(a.name)}</span>${p ? `<span class="badge bd-success">pagato</span>` : ""}</div><div class="t2">${esc([eur(a.amount) + " " + freqOf(perMonths(a)).per, (a.share ?? 100) !== 100 ? `tua quota ${a.share}%` : "", nr ? (a.renew ? "scade il " + fmtDateS(nr) : "scade a " + mLong(nr.slice(0, 7))) : ""].filter(Boolean).join(" · "))}</div></div><div class="am mono">${eur(accrualOf(a))}<span class="muted xs">/mese</span></div></button>`; }).join(`<div class="sep"></div>`) : `<div class="empty">Nessun abbonamento non mensile.</div>`}</div></div>
+      <p class="xs muted">Il budget di "Abbonamenti mensili" è la somma di tutti e due i gruppi. Quelli trimestrali, semestrali e annuali vengono accantonati un po' ogni mese: quando li paghi, registra la spesa come "Spesa annuale" scegliendo l'abbonamento, così esce dal fondo.</p>
       <div class="dfoot"><button class="btn b-default" data-act="subs-new">${ic("plus")}Aggiungi abbonamento</button><span class="grow"></span><button class="btn b-outline" data-act="subs-movs">Movimenti</button></div>`;
     return;
   }
-  const x = subState.item; const yearly = x.freq === "y";
-  const months = [...Array(12)].map((_, i) => `<option value="${i + 1}" ${Number(x.due) === i + 1 ? "selected" : ""}>${esc(mLong(`2026-${pad(i + 1)}`))}</option>`).join("");
+  const x = subState.item; const fq = freqOf(x.freq);
   el.innerHTML = `<div class="handle-zone"><div class="handle"></div></div>
     <div class="between"><div class="row"><button class="btn b-ghost b-icon b-sm" data-act="subs-back" aria-label="Torna all'elenco"><svg class="i" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg></button><h2 id="abTitle" style="font-size:17px;font-weight:600">${x.isNew ? "Nuovo abbonamento" : "Modifica abbonamento"}</h2></div><button class="btn b-ghost b-icon b-sm" data-act="subs-close" aria-label="Chiudi">${ic("x")}</button></div>
     <div class="field"><label for="abName">Nome</label><input id="abName" class="inp" placeholder="es. Spotify" value="${esc(x.name)}"></div>
-    <div class="field"><span class="lab">Si paga</span><div class="tlist" role="tablist" aria-label="Frequenza"><button class="tab" role="tab" data-act="subs-freq" data-v="m" aria-selected="${!yearly}">Ogni mese</button><button class="tab" role="tab" data-act="subs-freq" data-v="y" aria-selected="${yearly}">Una volta l'anno</button></div></div>
-    <div class="field"><label for="abAmt">${yearly ? "Importo annuo €" : "Importo al mese €"}</label><input id="abAmt" class="inp mono" inputmode="decimal" placeholder="0,00" value="${esc(x.amountStr)}"></div>
-    ${yearly ? `<div class="field"><label for="abDue">Mese di rinnovo</label><select id="abDue" class="inp"><option value="">Nessuna data fissa</option>${months}</select></div><p class="xs muted">Viene accantonato 1/12 ogni mese nel fondo.</p>` : ""}
+    <div class="field"><span class="lab">Durata</span><div class="togs" role="group" aria-label="Durata">${FREQS.map(f => `<button class="tog" data-act="subs-freq" data-v="${f.m}" aria-pressed="${f.m === fq.m}">${f.n}</button>`).join("")}</div></div>
+    <div class="grid2"><div class="field"><label for="abAmt">Importo ${fq.per} €</label><input id="abAmt" class="inp mono" inputmode="decimal" placeholder="0,00" value="${esc(x.amountStr)}"></div>
+      <div class="field"><label for="abDue">Prossima scadenza</label><input id="abDue" class="inp" type="date" value="${esc(x.renew || "")}"></div></div>
+    <p class="xs muted" id="abHint">${subHint(x)}</p>
     <div class="dfoot">${x.isNew ? "" : `<button class="btn ${subState.confirmDel ? "b-destructive" : "b-dghost"}" data-act="subs-del">${ic("trash")}${subState.confirmDel ? "Conferma" : "Elimina"}</button>`}<span class="grow"></span><button class="btn b-outline" data-act="subs-back">Annulla</button><button class="btn b-default" data-act="subs-save" id="abSave">Salva</button></div>`;
   if (x.isNew) setTimeout(() => $("#abName")?.focus(), 40);
 }
-function readSubInputs() { const x = subState?.item; if (!x || !$("#abName")) return; x.name = $("#abName").value; x.amountStr = $("#abAmt").value; if ($("#abDue")) x.due = $("#abDue").value; }
+function subHint(x) {
+  const fq = freqOf(x.freq), amt = parseAmt(x.amountStr || ""), ok = isFinite(amt) && amt > 0;
+  const when = x.renew ? ` Si rinnova ${fq.m === 1 ? "ogni mese" : "ogni " + fq.m + " mesi"} a partire dal ${fmtDate(x.renew)}.` : " Indica la prossima scadenza per vederla nell'elenco e negli avvisi.";
+  return (fq.m === 1 ? "Si registra ogni mese tra le ricorrenti." : `Vengono accantonati ${ok ? eur(amt / fq.m) : "1/" + fq.m} al mese nel fondo, fino al pagamento.`) + when;
+}
+function readSubInputs() { const x = subState?.item; if (!x || !$("#abName")) return; x.name = $("#abName").value; x.amountStr = $("#abAmt").value; x.renew = $("#abDue").value; }
 async function saveSub() {
   readSubInputs(); const x = subState.item; const name = x.name.trim(), amount = parseAmt(x.amountStr);
   if (!name) return toast("Scrivi il nome dell'abbonamento");
@@ -1221,8 +1249,9 @@ async function saveSub() {
   const prevA = cfg.annual.find(y => y.id === x.id);
   const i = cfg.recurring.findIndex(y => y.id === x.id) >= 0 || prevA ? 0 : -1;
   cfg.recurring = cfg.recurring.filter(y => y.id !== x.id); cfg.annual = cfg.annual.filter(y => y.id !== x.id);
-  if (x.freq === "y") cfg.annual.push({...(prevA || {share:100}), id:x.id, name, amount:r2(amount), due:x.due ? Number(x.due) : null, sub:true});
-  else cfg.recurring.push({id:x.id, name, amount:r2(amount), cat:SUBCAT});
+  const renew = /^\d{4}-\d{2}-\d{2}$/.test(x.renew || "") ? x.renew : null, months = freqOf(x.freq).m;
+  if (months > 1) cfg.annual.push({...(prevA || {share:100}), id:x.id, name, amount:r2(amount), months, renew, due:renew ? Number(renew.slice(5, 7)) : (prevA?.due ?? null), sub:true});
+  else cfg.recurring.push({id:x.id, name, amount:r2(amount), cat:SUBCAT, ...(renew ? {renew} : {})});
   $("#abSave").disabled = true;
   try { await S.db.doc("config/main").set(cfg); S.cfg = cfg; subState = {mode:"list"}; drawSubs(); render(); toast(i >= 0 ? "Abbonamento aggiornato" : "Abbonamento aggiunto"); }
   catch (e) { fail(e); const b = $("#abSave"); if (b) b.disabled = false; }
@@ -1287,10 +1316,10 @@ document.addEventListener("click", async e => {
   if (act === "open-subs") return openSubs();
   if (act === "subs-close") return closeSubs();
   if (act === "subs-back") { subState = {mode:"list"}; return drawSubs(); }
-  if (act === "subs-new") { subState = {mode:"edit", item:{id:"sub_" + Math.random().toString(36).slice(2, 8), isNew:true, name:"", amountStr:"", freq:"m", due:""}}; return drawSubs(); }
+  if (act === "subs-new") { subState = {mode:"edit", item:{id:"sub_" + Math.random().toString(36).slice(2, 8), isNew:true, name:"", amountStr:"", freq:1, renew:""}}; return drawSubs(); }
   if (act === "subs-edit") { const x = subs().find(y => y.id === a.dataset.id), y = annSubs().find(z => z.id === a.dataset.id); const it = x || y; if (!it) return;
-    subState = {mode:"edit", item:{id:it.id, name:it.name, amountStr:String(it.amount).replace(".", ","), freq:y ? "y" : "m", due:y?.due || ""}}; return drawSubs(); }
-  if (act === "subs-freq") { readSubInputs(); subState.item.freq = a.dataset.v; return drawSubs(); }
+    subState = {mode:"edit", item:{id:it.id, name:it.name, amountStr:String(it.amount).replace(".", ","), freq:y ? perMonths(y) : 1, renew:it.renew || (nextRenew(it) || "")}}; return drawSubs(); }
+  if (act === "subs-freq") { readSubInputs(); subState.item.freq = Number(a.dataset.v); return drawSubs(); }
   if (act === "subs-save") return saveSub();
   if (act === "subs-del") return deleteSub();
   if (act === "subs-movs") { closeSubs(); S.catFilter = SUBCAT; S.tagFilter = ""; S.unsubTag?.(); S.tagView = ""; S.tagTx = null; S.view = "movimenti"; window.scrollTo(0, 0); render(); return; }
@@ -1349,8 +1378,9 @@ document.addEventListener("input", e => {
   }
   if (t.closest?.("#settings")) S.settingsDirty = true;
   if ((t.id === "fAmt" || t.id === "fShare") && $("#fMonthly")) { const v = parseAmt($("#fAmt").value || "0"), sh = $("#fShare").value === "" ? 100 : Number($("#fShare").value); $("#fMonthly").textContent = eur((isFinite(v) ? v : 0) * ((isFinite(sh) ? sh : 100) / 100) / 12); }
+  if ((t.id === "abAmt" || t.id === "abDue") && subState?.item && $("#abHint")) { readSubInputs(); $("#abHint").innerHTML = subHint(subState.item); }
   if (t.id === "sAmt" && sheetState?.from && $("#sFrom")) { sheetState.amountStr = t.value; $("#sFrom").innerHTML = fromHint(sheetState); }
-  if (t.id === "sAmt" && sheetState?.kind === "inc") { const src = srcById(sheetState.src); const n = $("#sNet"); const v = parseAmt(t.value); if (n && src) n.innerHTML = isFinite(v) ? `Netto (${src.pct}%) <b class="mono" style="color:var(--foreground)">${eur(v * src.pct / 100)}</b>` : `Netto al ${src.pct}% del fatturato`; }
+  if (t.id === "sAmt" && sheetState?.kind === "inc" && !isExtraSrc(sheetState.src)) { const src = srcById(sheetState.src); const n = $("#sNet"); const v = parseAmt(t.value); if (n && src) n.innerHTML = isFinite(v) ? `Netto (${src.pct}%) <b class="mono" style="color:var(--foreground)">${eur(v * src.pct / 100)}</b>` : `Netto al ${src.pct}% del fatturato`; }
 });
 document.addEventListener("change", e => {
   if (e.target.id === "fcat") { S.catFilter = e.target.value; render(); }
