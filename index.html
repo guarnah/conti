@@ -419,7 +419,13 @@ const addDaysISO = (d, k) => { const [y, mo, dd] = d.split("-").map(Number); ret
 const fmtDateS = iso => iso.slice(0, 4) === todayISO().slice(0, 4) ? new Intl.DateTimeFormat("it-IT", {day:"numeric", month:"short"}).format(new Date(iso + "T12:00:00")) : fmtDate(iso);
 const fmtDate = iso => new Intl.DateTimeFormat("it-IT", {day:"numeric", month:"short", year:"numeric"}).format(new Date(iso + "T12:00:00"));
 /* prossima scadenza di un abbonamento, a partire dalla data indicata e ripetendo il periodo */
+/* rinnovo automatico: di default sì per i mensili, no per gli altri (alla scadenza l'app chiede cosa fare) */
+const autoOf = x => x.auto ?? (x.cat === SUBCAT);
+const isExpired = x => !!x.renew && !autoOf(x) && x.renew <= todayISO();
+const expiredSubs = () => [...subs(), ...annSubs()].filter(isExpired).sort((a, b) => a.renew.localeCompare(b.renew));
+const subById = id => subs().find(y => y.id === id) || annSubs().find(y => y.id === id);
 function nextRenew(x) {
+  if (x.renew && !autoOf(x)) return x.renew;
   const base = x.renew || (x.due ? `${curMonth().slice(0, 4)}-${pad(x.due)}-01` : ""); if (!base) return "";
   const step = x.cat === SUBCAT ? 1 : perMonths(x), today = todayISO();
   for (let k = 0; k < 1200; k++) { const d = addMonthsISO(base, k * step); if (d >= today) return d; }
@@ -620,6 +626,7 @@ function viewMese() {
   const pct = r.budTot ? Math.round(r.spentTot / r.budTot * 100) : 0;
   let h = "";
   if (bud.draft && S.budgetLoaded) h += `<div class="alert"><div class="row" style="align-items:flex-start">${ic("info")}<div><div class="t">Budget di ${esc(mLong(S.month))} da confermare</div><div class="muted sm">Per ora uso ${bud.from ? "quello di " + esc(mLong(bud.from)) : "i valori predefiniti"}.</div></div></div><button class="btn b-outline b-sm" data-act="goto-budget">Rivedi budget</button></div>`;
+  if (S.month === curMonth()) for (const x of expiredSubs()) h += `<div class="alert"><div class="row" style="align-items:flex-start">${ic("cal")}<div><div class="t">${esc(x.name)} è scaduto ${x.renew === todayISO() ? "oggi" : "il " + esc(fmtDateS(x.renew))}</div><div class="muted sm">${esc(eur(x.amount) + " " + freqOf(x.cat === SUBCAT ? 1 : perMonths(x)).per)} · vuoi rinnovarlo o interromperlo?</div></div></div><div class="row" style="gap:6px;flex-wrap:wrap"><button class="btn b-default b-sm" data-act="sub-renew" data-id="${esc(x.id)}">Rinnova</button><button class="btn b-outline b-sm" data-act="sub-stop" data-id="${esc(x.id)}">Interrompi</button></div></div>`;
   if (restCat() && started(S.month)) { const rr = restFor(bud.cats), mn = restMin(), rn = catById(restCat()).name;
     if (rr < -0.5) h += `<div class="alert" style="border-color:var(--destructive)"><div class="row" style="align-items:flex-start;color:var(--destructive)">${ic("info")}<div><div class="t">Budget oltre le entrate di ${eur0(-rr)}</div><div class="sm">${esc(rn)} è a zero. Riduci qualche voce nella sezione Budget.</div></div></div><button class="btn b-outline b-sm" data-act="goto-budget">Budget</button></div>`;
     else if (rr < mn - 0.5) h += `<div class="alert" style="border-color:var(--destructive)"><div class="row" style="align-items:flex-start;color:var(--destructive)">${ic("info")}<div><div class="t">${esc(rn)} sotto il minimo: ${eur0(rr)} su ${eur0(mn)}</div><div class="sm">Riduci altre voci di ${eur0(mn - rr)} nella sezione Budget.</div></div></div><button class="btn b-outline b-sm" data-act="goto-budget">Budget</button></div>`; }
@@ -1197,8 +1204,8 @@ async function deleteFundItem() {
 
 /* ---------- drawer abbonamenti ---------- */
 let subState = null;
-function openSubs() {
-  subState = {mode:"list"};
+function openSubs(init) {
+  subState = init || {mode:"list"};
   const bg = document.createElement("div"); bg.className = "ovl"; bg.id = "subBg";
   bg.innerHTML = `<div class="drawer" role="dialog" aria-modal="true" aria-labelledby="abTitle" id="subs"></div>`;
   document.body.appendChild(bg); document.body.style.overflow = "hidden";
@@ -1217,41 +1224,84 @@ function drawSubs() {
     el.innerHTML = `<div class="handle-zone"><div class="handle"></div></div>
       <div class="between"><div><h2 id="abTitle" style="font-size:17px;font-weight:600">Abbonamenti</h2><p class="muted sm"><span class="mono">${eur(subsMonthlyRec() + annSubsMonthly())}</span> al mese · <span class="mono">${eur0((subsMonthlyRec() + annSubsMonthly()) * 12)}</span> all'anno</p></div><button class="btn b-ghost b-icon b-sm" data-act="subs-close" aria-label="Chiudi">${ic("x")}</button></div>
       <div class="dayh" style="padding:0 2px"><span>Mensili · si registrano ogni mese</span><span class="mono">${eur(subsMonthlyRec())}</span></div>
-      <div class="card"><div class="card-c flush">${list.length ? list.map(x => `<button class="trow" data-act="subs-edit" data-id="${esc(x.id)}" style="grid-template-columns:36px minmax(0,1fr) auto"><div class="ava g-ext">${ic("repeat")}</div><div class="grow"><div class="t1">${esc(x.name)}</div><div class="t2">${esc([paid.has(x.id) ? (nextRenew(x) ? "Registrato" : `Registrato a ${mLong(S.month)}`) : (nextRenew(x) ? "Da registrare" : `Da registrare a ${mLong(S.month)}`), nextRenew(x) ? "scade il " + fmtDateS(nextRenew(x)) : ""].filter(Boolean).join(" · "))}</div></div><div class="am mono">${eur(x.amount)}<span class="muted xs">/mese</span></div></button>`).join(`<div class="sep"></div>`) : `<div class="empty">Nessun abbonamento mensile.</div>`}</div></div>
+      <div class="card"><div class="card-c flush">${list.length ? list.map(x => `<button class="trow" data-act="${isExpired(x) ? "subs-renew" : "subs-edit"}" data-id="${esc(x.id)}" style="grid-template-columns:36px minmax(0,1fr) auto"><div class="ava g-ext">${ic("repeat")}</div><div class="grow"><div class="t1 row" style="gap:6px"><span style="overflow:hidden;text-overflow:ellipsis">${esc(x.name)}</span>${isExpired(x) ? `<span class="badge bd-destructive">scaduto</span>` : ""}</div><div class="t2">${esc([paid.has(x.id) ? (nextRenew(x) ? "Registrato" : `Registrato a ${mLong(S.month)}`) : (nextRenew(x) ? "Da registrare" : `Da registrare a ${mLong(S.month)}`), nextRenew(x) ? (isExpired(x) ? "scaduto il " : "scade il ") + fmtDateS(nextRenew(x)) : ""].filter(Boolean).join(" · "))}</div></div><div class="am mono">${eur(x.amount)}<span class="muted xs">/mese</span></div></button>`).join(`<div class="sep"></div>`) : `<div class="empty">Nessun abbonamento mensile.</div>`}</div></div>
       <div class="dayh" style="padding:0 2px"><span>Trimestrali, semestrali e annuali · accantonati ogni mese</span><span class="mono">${eur(annSubsMonthly())}/mese</span></div>
-      <div class="card"><div class="card-c flush">${alist.length ? alist.map(a => { const p = a.renew ? subPaidNow(a) : paidYr(a.id); const nr = nextRenew(a); return `<button class="trow" data-act="subs-edit" data-id="${esc(a.id)}" style="grid-template-columns:36px minmax(0,1fr) auto"><div class="ava g-fondo">${ic("cal")}</div><div class="grow"><div class="t1 row" style="gap:6px"><span style="overflow:hidden;text-overflow:ellipsis">${esc(a.name)}</span>${p ? `<span class="badge bd-success">pagato</span>` : ""}</div><div class="t2">${esc([eur(a.amount) + " " + freqOf(perMonths(a)).per, (a.share ?? 100) !== 100 ? `tua quota ${a.share}%` : "", nr ? (a.renew ? "scade il " + fmtDateS(nr) : "scade a " + mLong(nr.slice(0, 7))) : ""].filter(Boolean).join(" · "))}</div></div><div class="am mono">${eur(accrualOf(a))}<span class="muted xs">/mese</span></div></button>`; }).join(`<div class="sep"></div>`) : `<div class="empty">Nessun abbonamento non mensile.</div>`}</div></div>
+      <div class="card"><div class="card-c flush">${alist.length ? alist.map(a => { const p = a.renew ? subPaidNow(a) : paidYr(a.id); const nr = nextRenew(a); return `<button class="trow" data-act="${isExpired(a) ? "subs-renew" : "subs-edit"}" data-id="${esc(a.id)}" style="grid-template-columns:36px minmax(0,1fr) auto"><div class="ava g-fondo">${ic("cal")}</div><div class="grow"><div class="t1 row" style="gap:6px"><span style="overflow:hidden;text-overflow:ellipsis">${esc(a.name)}</span>${isExpired(a) ? `<span class="badge bd-destructive">scaduto</span>` : p ? `<span class="badge bd-success">pagato</span>` : ""}</div><div class="t2">${esc([eur(a.amount) + " " + freqOf(perMonths(a)).per, (a.share ?? 100) !== 100 ? `tua quota ${a.share}%` : "", nr ? (a.renew ? (isExpired(a) ? "scaduto il " : "scade il ") + fmtDateS(nr) : "scade a " + mLong(nr.slice(0, 7))) : ""].filter(Boolean).join(" · "))}</div></div><div class="am mono">${eur(accrualOf(a))}<span class="muted xs">/mese</span></div></button>`; }).join(`<div class="sep"></div>`) : `<div class="empty">Nessun abbonamento non mensile.</div>`}</div></div>
       <p class="xs muted">Il budget di "Abbonamenti mensili" è la somma di tutti e due i gruppi. Quelli trimestrali, semestrali e annuali vengono accantonati un po' ogni mese: quando li paghi, registra la spesa come "Spesa annuale" scegliendo l'abbonamento, così esce dal fondo.</p>
       <div class="dfoot"><button class="btn b-default" data-act="subs-new">${ic("plus")}Aggiungi abbonamento</button><span class="grow"></span><button class="btn b-outline" data-act="subs-movs">Movimenti</button></div>`;
     return;
   }
   const x = subState.item; const fq = freqOf(x.freq);
+  if (subState.mode === "renew") {
+    const amt = parseAmt(x.amountStr || ""), stop = subState.confirmStop;
+    el.innerHTML = `<div class="handle-zone"><div class="handle"></div></div>
+      <div class="between"><div><h2 id="abTitle" style="font-size:17px;font-weight:600">${esc(x.name)}</h2><p class="muted sm">Scaduto ${x.oldRenew === todayISO() ? "oggi" : "il " + esc(fmtDate(x.oldRenew))} · rinnovalo o interrompilo</p></div><button class="btn b-ghost b-icon b-sm" data-act="subs-close" aria-label="Chiudi">${ic("x")}</button></div>
+      <div class="field"><span class="lab">Rinnova per</span><div class="togs" role="group" aria-label="Durata del rinnovo">${FREQS.map(f => `<button class="tog" data-act="subs-freq" data-v="${f.m}" aria-pressed="${f.m === fq.m}">${f.m === 1 ? "1 mese" : f.m === 12 ? "1 anno" : f.m + " mesi"}</button>`).join("")}</div></div>
+      <div class="grid2"><div class="field"><label for="abAmt">Tariffa ${fq.per} €</label><input id="abAmt" class="inp mono" inputmode="decimal" placeholder="0,00" value="${esc(x.amountStr)}"></div>
+        <div class="field"><label for="abDue">Nuova scadenza</label><input id="abDue" class="inp" type="date" value="${esc(x.renew || "")}"></div></div>
+      <label class="row sm" style="gap:8px;cursor:pointer"><input type="checkbox" id="abPay" ${x.pay ? "checked" : ""}><span id="abPayL">Registra il pagamento di <b class="mono">${isFinite(amt) && amt > 0 ? eur(amt) : "—"}</b> con data di oggi</span></label>
+      <label class="row sm" style="gap:8px;cursor:pointer"><input type="checkbox" id="abAuto" ${x.auto ? "checked" : ""}>Da qui in poi si rinnova da solo, senza chiedere</label>
+      <p class="xs muted">${fq.m === 1 ? "Il pagamento va tra le spese degli abbonamenti di questo mese." : "Il pagamento esce dal fondo spese annuali, dove è stato accantonato."} Se interrompi, l'abbonamento sparisce dal budget dal mese prossimo; i pagamenti passati restano nei movimenti.</p>
+      <div class="dfoot"><button class="btn ${stop ? "b-destructive" : "b-dghost"}" data-act="subs-stop">${stop ? "Conferma interruzione" : "Interrompi"}</button><span class="grow"></span><button class="btn b-outline" data-act="subs-close">Più tardi</button><button class="btn b-default" data-act="subs-renew-save" id="abSave">Rinnova</button></div>`;
+    return;
+  }
   el.innerHTML = `<div class="handle-zone"><div class="handle"></div></div>
     <div class="between"><div class="row"><button class="btn b-ghost b-icon b-sm" data-act="subs-back" aria-label="Torna all'elenco"><svg class="i" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg></button><h2 id="abTitle" style="font-size:17px;font-weight:600">${x.isNew ? "Nuovo abbonamento" : "Modifica abbonamento"}</h2></div><button class="btn b-ghost b-icon b-sm" data-act="subs-close" aria-label="Chiudi">${ic("x")}</button></div>
     <div class="field"><label for="abName">Nome</label><input id="abName" class="inp" placeholder="es. Spotify" value="${esc(x.name)}"></div>
     <div class="field"><span class="lab">Durata</span><div class="togs" role="group" aria-label="Durata">${FREQS.map(f => `<button class="tog" data-act="subs-freq" data-v="${f.m}" aria-pressed="${f.m === fq.m}">${f.n}</button>`).join("")}</div></div>
     <div class="grid2"><div class="field"><label for="abAmt">Importo ${fq.per} €</label><input id="abAmt" class="inp mono" inputmode="decimal" placeholder="0,00" value="${esc(x.amountStr)}"></div>
       <div class="field"><label for="abDue">Prossima scadenza</label><input id="abDue" class="inp" type="date" value="${esc(x.renew || "")}"></div></div>
+    <label class="row sm" style="gap:8px;cursor:pointer"><input type="checkbox" id="abAuto" ${x.auto ? "checked" : ""}>Si rinnova da solo</label>
     <p class="xs muted" id="abHint">${subHint(x)}</p>
     <div class="dfoot">${x.isNew ? "" : `<button class="btn ${subState.confirmDel ? "b-destructive" : "b-dghost"}" data-act="subs-del">${ic("trash")}${subState.confirmDel ? "Conferma" : "Elimina"}</button>`}<span class="grow"></span><button class="btn b-outline" data-act="subs-back">Annulla</button><button class="btn b-default" data-act="subs-save" id="abSave">Salva</button></div>`;
   if (x.isNew) setTimeout(() => $("#abName")?.focus(), 40);
 }
 function subHint(x) {
   const fq = freqOf(x.freq), amt = parseAmt(x.amountStr || ""), ok = isFinite(amt) && amt > 0;
-  const when = x.renew ? ` Si rinnova ${fq.m === 1 ? "ogni mese" : "ogni " + fq.m + " mesi"} a partire dal ${fmtDate(x.renew)}.` : " Indica la prossima scadenza per vederla nell'elenco e negli avvisi.";
+  const when = !x.renew ? " Indica la prossima scadenza per vederla nell'elenco e negli avvisi." : x.auto ? ` Si rinnova da solo ${fq.m === 1 ? "ogni mese" : "ogni " + fq.m + " mesi"} a partire dal ${fmtDate(x.renew)}.` : ` Il ${fmtDate(x.renew)} l'app ti chiede se rinnovarlo o interromperlo.`;
   return (fq.m === 1 ? "Si registra ogni mese tra le ricorrenti." : `Vengono accantonati ${ok ? eur(amt / fq.m) : "1/" + fq.m} al mese nel fondo, fino al pagamento.`) + when;
 }
-function readSubInputs() { const x = subState?.item; if (!x || !$("#abName")) return; x.name = $("#abName").value; x.amountStr = $("#abAmt").value; x.renew = $("#abDue").value; }
+function readSubInputs() { const x = subState?.item; if (!x || !$("#abAmt")) return; if ($("#abName")) x.name = $("#abName").value; x.amountStr = $("#abAmt").value; x.renew = $("#abDue").value; if ($("#abAuto")) x.auto = $("#abAuto").checked; if ($("#abPay")) x.pay = $("#abPay").checked; }
+/* scrive l'abbonamento nella lista giusta (mensili tra le ricorrenti, gli altri tra le spese annuali) */
+function putSub(cfg, x, name, amount) {
+  cfg.recurring = cfg.recurring || []; cfg.annual = cfg.annual || [];
+  const prevA = cfg.annual.find(y => y.id === x.id), existed = !!prevA || cfg.recurring.some(y => y.id === x.id);
+  cfg.recurring = cfg.recurring.filter(y => y.id !== x.id); cfg.annual = cfg.annual.filter(y => y.id !== x.id);
+  const renew = /^\d{4}-\d{2}-\d{2}$/.test(x.renew || "") ? x.renew : null, months = freqOf(x.freq).m, auto = !!x.auto;
+  if (months > 1) cfg.annual.push({...(prevA || {share:100}), id:x.id, name, amount:r2(amount), months, renew, auto, due:renew ? Number(renew.slice(5, 7)) : (prevA?.due ?? null), sub:true});
+  else cfg.recurring.push({id:x.id, name, amount:r2(amount), cat:SUBCAT, auto, ...(renew ? {renew} : {})});
+  return existed;
+}
+async function renewSub() {
+  readSubInputs(); const x = subState.item, amount = parseAmt(x.amountStr);
+  if (!isFinite(amount) || amount <= 0) return toast("Inserisci la tariffa");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(x.renew || "") || x.renew <= todayISO()) return toast("Scegli una nuova scadenza futura");
+  const cfg = structuredClone(S.cfg); putSub(cfg, x, x.name, amount);
+  $("#abSave").disabled = true;
+  try {
+    await S.db.doc("config/main").set(cfg); S.cfg = cfg;
+    if (x.pay) { const d = todayISO(), m1 = freqOf(x.freq).m === 1;
+      const paidThisMonth = m1 && S.month === curMonth() && S.tx.some(t => t.recId === x.id);
+      if (!paidThisMonth) await S.db.collection("tx").doc().set(m1 ? {kind:"exp", cat:SUBCAT, amount:r2(amount), date:d, month:d.slice(0, 7), note:x.name, tag:"", recId:x.id, created:Date.now()}
+        : {kind:"exp", cat:"fondo", annId:x.id, amount:r2(amount), date:d, month:d.slice(0, 7), note:"Rinnovo " + x.name, tag:"", created:Date.now()}); }
+    closeSubs(); render(); toast(`${x.name} rinnovato fino al ${fmtDate(x.renew)}`);
+  } catch (e) { fail(e); const b = $("#abSave"); if (b) b.disabled = false; }
+}
+async function stopSub() {
+  if (!subState.confirmStop) { readSubInputs(); subState.confirmStop = true; return drawSubs(); }
+  const id = subState.item.id, name = subState.item.name;
+  const cfg = structuredClone(S.cfg); cfg.recurring = (cfg.recurring || []).filter(y => y.id !== id); cfg.annual = (cfg.annual || []).filter(y => y.id !== id);
+  try { await S.db.doc("config/main").set(cfg); S.cfg = cfg; closeSubs(); render(); toast(name + " interrotto"); } catch (e) { fail(e); }
+}
+function renewState(id, stop) {
+  const it = subById(id); if (!it) return null; const months = it.cat === SUBCAT ? 1 : perMonths(it);
+  return {mode:"renew", confirmStop:!!stop, item:{id:it.id, name:it.name, amountStr:String(it.amount).replace(".", ","), freq:months, oldRenew:it.renew, renew:addMonthsISO(it.renew, months), auto:false, pay:true}};
+}
 async function saveSub() {
   readSubInputs(); const x = subState.item; const name = x.name.trim(), amount = parseAmt(x.amountStr);
   if (!name) return toast("Scrivi il nome dell'abbonamento");
   if (!isFinite(amount) || amount <= 0) return toast("Inserisci l'importo");
-  const cfg = structuredClone(S.cfg); cfg.recurring = cfg.recurring || []; cfg.annual = cfg.annual || [];
-  const prevA = cfg.annual.find(y => y.id === x.id);
-  const i = cfg.recurring.findIndex(y => y.id === x.id) >= 0 || prevA ? 0 : -1;
-  cfg.recurring = cfg.recurring.filter(y => y.id !== x.id); cfg.annual = cfg.annual.filter(y => y.id !== x.id);
-  const renew = /^\d{4}-\d{2}-\d{2}$/.test(x.renew || "") ? x.renew : null, months = freqOf(x.freq).m;
-  if (months > 1) cfg.annual.push({...(prevA || {share:100}), id:x.id, name, amount:r2(amount), months, renew, due:renew ? Number(renew.slice(5, 7)) : (prevA?.due ?? null), sub:true});
-  else cfg.recurring.push({id:x.id, name, amount:r2(amount), cat:SUBCAT, ...(renew ? {renew} : {})});
+  const cfg = structuredClone(S.cfg); const i = putSub(cfg, x, name, amount) ? 0 : -1;
   $("#abSave").disabled = true;
   try { await S.db.doc("config/main").set(cfg); S.cfg = cfg; subState = {mode:"list"}; drawSubs(); render(); toast(i >= 0 ? "Abbonamento aggiornato" : "Abbonamento aggiunto"); }
   catch (e) { fail(e); const b = $("#abSave"); if (b) b.disabled = false; }
@@ -1316,10 +1366,17 @@ document.addEventListener("click", async e => {
   if (act === "open-subs") return openSubs();
   if (act === "subs-close") return closeSubs();
   if (act === "subs-back") { subState = {mode:"list"}; return drawSubs(); }
-  if (act === "subs-new") { subState = {mode:"edit", item:{id:"sub_" + Math.random().toString(36).slice(2, 8), isNew:true, name:"", amountStr:"", freq:1, renew:""}}; return drawSubs(); }
+  if (act === "subs-new") { subState = {mode:"edit", item:{id:"sub_" + Math.random().toString(36).slice(2, 8), isNew:true, name:"", amountStr:"", freq:1, renew:"", auto:true}}; return drawSubs(); }
   if (act === "subs-edit") { const x = subs().find(y => y.id === a.dataset.id), y = annSubs().find(z => z.id === a.dataset.id); const it = x || y; if (!it) return;
-    subState = {mode:"edit", item:{id:it.id, name:it.name, amountStr:String(it.amount).replace(".", ","), freq:y ? perMonths(y) : 1, renew:it.renew || (nextRenew(it) || "")}}; return drawSubs(); }
-  if (act === "subs-freq") { readSubInputs(); subState.item.freq = Number(a.dataset.v); return drawSubs(); }
+    subState = {mode:"edit", item:{id:it.id, name:it.name, amountStr:String(it.amount).replace(".", ","), freq:y ? perMonths(y) : 1, renew:it.renew || (nextRenew(it) || ""), auto:autoOf(it)}}; return drawSubs(); }
+  if (act === "subs-freq") { readSubInputs(); const x = subState.item; x.freq = Number(a.dataset.v);
+    if (x.isNew) x.auto = x.freq === 1;
+    if (subState.mode === "renew") x.renew = addMonthsISO(x.oldRenew, x.freq);
+    return drawSubs(); }
+  if (act === "sub-renew" || act === "sub-stop") { const st = renewState(a.dataset.id, act === "sub-stop"); if (st) openSubs(st); return; }
+  if (act === "subs-renew") { const st = renewState(a.dataset.id); if (st) { subState = st; drawSubs(); } return; }
+  if (act === "subs-renew-save") return renewSub();
+  if (act === "subs-stop") return stopSub();
   if (act === "subs-save") return saveSub();
   if (act === "subs-del") return deleteSub();
   if (act === "subs-movs") { closeSubs(); S.catFilter = SUBCAT; S.tagFilter = ""; S.unsubTag?.(); S.tagView = ""; S.tagTx = null; S.view = "movimenti"; window.scrollTo(0, 0); render(); return; }
@@ -1378,11 +1435,13 @@ document.addEventListener("input", e => {
   }
   if (t.closest?.("#settings")) S.settingsDirty = true;
   if ((t.id === "fAmt" || t.id === "fShare") && $("#fMonthly")) { const v = parseAmt($("#fAmt").value || "0"), sh = $("#fShare").value === "" ? 100 : Number($("#fShare").value); $("#fMonthly").textContent = eur((isFinite(v) ? v : 0) * ((isFinite(sh) ? sh : 100) / 100) / 12); }
-  if ((t.id === "abAmt" || t.id === "abDue") && subState?.item && $("#abHint")) { readSubInputs(); $("#abHint").innerHTML = subHint(subState.item); }
+  if ((t.id === "abAmt" || t.id === "abDue" || t.id === "abAuto") && subState?.item && $("#abHint")) { readSubInputs(); $("#abHint").innerHTML = subHint(subState.item); }
+  if (t.id === "abAmt" && subState?.mode === "renew" && $("#abPayL")) { const v = parseAmt(t.value); $("#abPayL b").textContent = isFinite(v) && v > 0 ? eur(v) : "—"; }
   if (t.id === "sAmt" && sheetState?.from && $("#sFrom")) { sheetState.amountStr = t.value; $("#sFrom").innerHTML = fromHint(sheetState); }
   if (t.id === "sAmt" && sheetState?.kind === "inc" && !isExtraSrc(sheetState.src)) { const src = srcById(sheetState.src); const n = $("#sNet"); const v = parseAmt(t.value); if (n && src) n.innerHTML = isFinite(v) ? `Netto (${src.pct}%) <b class="mono" style="color:var(--foreground)">${eur(v * src.pct / 100)}</b>` : `Netto al ${src.pct}% del fatturato`; }
 });
 document.addEventListener("change", e => {
+  if (e.target.id === "abAuto" && subState?.item && $("#abHint")) { readSubInputs(); $("#abHint").innerHTML = subHint(subState.item); }
   if (e.target.id === "fcat") { S.catFilter = e.target.value; render(); }
   if (e.target.id === "ftag") { if (e.target.value) openTag(e.target.value); }
   if ((e.target.id === "backupFile" || e.target.id === "backupFile0") && e.target.files?.[0]) { const f = e.target.files[0]; f.text().then(async txt => { try { const n = await window.__cloud.importBackup(JSON.parse(txt)); S.trendCache = null; toast(`Importati ${n} elementi`); } catch (er) { console.error(er); toast("File di backup non valido"); } e.target.value = ""; }); }
