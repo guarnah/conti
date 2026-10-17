@@ -256,12 +256,18 @@ h1.pt{font-size:22px;font-weight:600;letter-spacing:-.02em}
   .stickybar{bottom:0}
 }
 /* Mese su schermo largo: Essenziali, Extra e Risparmio su tre colonne */
-.gcols,.gcol{display:flex;flex-direction:column;gap:16px}
+.gcols,.gcol,.tgrid{display:flex;flex-direction:column;gap:16px}
 .wide-only{display:none}
 @media (min-width:1100px){
   .hdr .in,body[data-view="mese"] .wrap{max-width:1240px}
   .gcols{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:start}
   .wide-only{display:block}
+  body[data-view="andamento"] .wrap{max-width:1240px}
+  /* Andamento: grafico grande + proiezione, poi fatturato e categoria, poi la tabella */
+  .tgrid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr))}
+  .t-inc{grid-column:1/9;grid-row:1}.t-proj{grid-column:9/13;grid-row:1}
+  .t-year{grid-column:1/7;grid-row:2}.t-cat{grid-column:7/13;grid-row:2}
+  .t-tab{grid-column:1/13;grid-row:3}
   .narrow-only{display:none}
 }
 @media (max-width:420px){.hero .big{font-size:34px}.stat{padding:10px 11px}.stat .v{font-size:15px}.card-h{padding:16px 16px 0}.card-c{padding:14px 16px 16px}}
@@ -839,11 +845,11 @@ async function loadTrend() {
 }
 function viewAndamento() {
   const sk = `<div class="skel" style="height:140px"></div>`;
-  return `<div class="card"><div class="card-h"><div><div class="card-t">Entrate e uscite</div><div class="card-d">Ultimi 12 mesi</div></div></div><div class="card-c chart" id="tchart">${sk}</div></div>
-  <div class="card"><div class="card-h"><div><div class="card-t">Fatturato ${S.month.slice(0, 4)}</div><div class="card-d">Anno solare, da gennaio a oggi</div></div></div><div class="card-c" id="tyear">${yearHtml()}</div></div>
-  <div class="card"><div class="card-h"><div><div class="card-t">Proiezione a fine anno</div><div class="card-d" id="tprojd">Stima al 31 dicembre</div></div></div><div class="card-c" id="tproj">${sk}</div></div>
-  <div class="card"><div class="card-h"><div><div class="card-t">Per categoria</div><div class="card-d">Speso rispetto al budget</div></div><select id="tcat" class="inp" style="width:auto;max-width:55%" aria-label="Categoria">${cats().map(c => `<option value="${esc(c.id)}" ${S.trendCat === c.id ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select></div><div class="card-c chart" id="tcatc">${sk}</div></div>
-  <div class="card"><div class="card-h"><div><div class="card-t">Mese per mese</div></div></div><div class="card-c tw" id="ttable" style="padding-top:8px">${sk}</div></div>`;
+  return `<div class="tgrid"><div class="card t-inc"><div class="card-h"><div><div class="card-t">Entrate e uscite</div><div class="card-d">Ultimi 12 mesi</div></div></div><div class="card-c chart" id="tchart">${sk}</div></div>
+  <div class="card t-year"><div class="card-h"><div><div class="card-t">Fatturato ${S.month.slice(0, 4)}</div><div class="card-d">Anno solare, da gennaio a oggi</div></div></div><div class="card-c" id="tyear">${yearHtml()}</div></div>
+  <div class="card t-proj"><div class="card-h"><div><div class="card-t">Proiezione a fine anno</div><div class="card-d" id="tprojd">Stima al 31 dicembre</div></div></div><div class="card-c" id="tproj">${sk}</div></div>
+  <div class="card t-cat"><div class="card-h"><div><div class="card-t">Per categoria</div><div class="card-d">Speso rispetto al budget</div></div><select id="tcat" class="inp" style="width:auto;max-width:55%" aria-label="Categoria">${cats().map(c => `<option value="${esc(c.id)}" ${S.trendCat === c.id ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select></div><div class="card-c chart" id="tcatc">${sk}</div></div>
+  <div class="card t-tab"><div class="card-h"><div><div class="card-t">Mese per mese</div></div></div><div class="card-c tw" id="ttable" style="padding-top:8px">${sk}</div></div></div>`;
 }
 function yearHtml() {
   const yr = S.month.slice(0, 4), last = S.month.slice(0, 4) === curMonth().slice(0, 4) ? curMonth() : `${yr}-12`;
