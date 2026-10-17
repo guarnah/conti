@@ -856,7 +856,7 @@ function viewAndamento() {
   return `<div class="tgrid"><div class="card t-inc"><div class="card-h"><div><div class="card-t">Entrate e uscite</div><div class="card-d">Ultimi 12 mesi</div></div></div><div class="card-c chart" id="tchart">${sk}</div></div>
   <div class="card t-year"><div class="card-h"><div><div class="card-t">Fatturato ${S.month.slice(0, 4)}</div><div class="card-d">Anno solare, da gennaio a oggi</div></div></div><div class="card-c" id="tyear">${yearHtml()}</div></div>
   <div class="card t-proj"><div class="card-h"><div><div class="card-t">Proiezione a fine anno</div><div class="card-d" id="tprojd">Stima al 31 dicembre</div></div></div><div class="card-c" id="tproj">${sk}</div></div>
-  <div class="card t-cat"><div class="card-h" style="flex-wrap:wrap;gap:10px"><div><div class="card-t">Per categoria</div><div class="card-d">${S.catMode === "tempo" ? "Speso rispetto al budget, ultimi 12 mesi" : "Come si dividono le spese di " + esc(mLong(S.month))}</div></div><div class="tlist" role="tablist" aria-label="Vista" style="width:auto"><button class="tab" role="tab" data-act="cat-mode" data-v="mese" aria-selected="${S.catMode !== "tempo"}">Nel mese</button><button class="tab" role="tab" data-act="cat-mode" data-v="tempo" aria-selected="${S.catMode === "tempo"}">Nel tempo</button></div></div>
+  <div class="card t-cat"><div class="card-h" style="flex-wrap:wrap;gap:10px"><div><div class="card-t">Per categoria</div><div class="card-d">${S.catMode === "tempo" ? "Speso rispetto al budget, ultimi 12 mesi" : "Come si dividono le uscite di " + esc(mLong(S.month)) + ", risparmio compreso"}</div></div><div class="tlist" role="tablist" aria-label="Vista" style="width:auto"><button class="tab" role="tab" data-act="cat-mode" data-v="mese" aria-selected="${S.catMode !== "tempo"}">Nel mese</button><button class="tab" role="tab" data-act="cat-mode" data-v="tempo" aria-selected="${S.catMode === "tempo"}">Nel tempo</button></div></div>
     ${S.catMode === "tempo" ? `<div class="card-c" style="padding-bottom:0"><select id="tcat" class="inp" aria-label="Categoria">${cats().map(c => `<option value="${esc(c.id)}" ${S.trendCat === c.id ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select></div>` : ""}<div class="card-c chart" id="tcatc">${sk}</div></div>
   <div class="card t-tab"><div class="card-h"><div><div class="card-t">Mese per mese</div></div></div><div class="card-c tw" id="ttable" style="padding-top:8px">${sk}</div></div></div>`;
 }
@@ -922,14 +922,17 @@ function drawCatPie(el) {
   let items = r.rows.filter(x => x.c.group !== "ris" && x.s > 0).map(x => ({n:x.c.name, v:x.s, id:x.c.id}));
   if (r.acc > 0) items.push({n:"Spese annuali (quota)", v:r.acc, id:"_acc"});
   items.sort((a, b) => b.v - a.v);
-  const tot = items.reduce((a, x) => a + x.v, 0);
-  if (!tot) { el.innerHTML = `<div class="empty">Nessuna spesa registrata a ${esc(mLong(S.month))}.</div>`; return; }
+  const ris = r.rows.filter(x => x.c.group === "ris").reduce((a, x) => a + x.s, 0);
+  const tot = items.reduce((a, x) => a + x.v, 0) + ris;
+  if (!tot) { el.innerHTML = `<div class="empty">Nessuna uscita registrata a ${esc(mLong(S.month))}.</div>`; return; }
   if (items.length > 7) { const rest = items.slice(6); items = [...items.slice(0, 6), {n:`Altro (${rest.length} voci)`, v:rest.reduce((a, x) => a + x.v, 0), id:"_altro"}]; }
   items.forEach((x, i) => x.c = x.id === "_altro" ? "var(--muted-foreground)" : `var(--pie-${i + 1})`);
+  /* il risparmio (pensione, investimenti, salvadanai) è sempre una voce a sé, con il colore del Risparmio dell'app */
+  if (ris > 0) items.push({n:"Risparmio", v:ris, id:"_ris", c:"var(--chart-3)", b:true});
   const R = 80, W = 26, C = 2 * Math.PI * R, gap = items.length > 1 ? 2 : 0; let off = 0;
   const arcs = items.map(x => { const len = x.v / tot * C; const a = `<circle cx="100" cy="100" r="${R}" fill="none" stroke="${x.c}" stroke-width="${W}" stroke-dasharray="${Math.max(0.5, len - gap)} ${C}" stroke-dashoffset="${-off}" transform="rotate(-90 100 100)"><title>${esc(x.n)}: ${eur(x.v)} · ${Math.round(x.v / tot * 100)}%</title></circle>`; off += len; return a; }).join("");
-  el.innerHTML = `<div class="pie"><svg viewBox="0 0 200 200" role="img" aria-label="Spese di ${esc(mLong(S.month))} per categoria">${arcs}<text x="100" y="94" text-anchor="middle" style="font-size:11px;fill:var(--muted-foreground)">Totale</text><text x="100" y="114" text-anchor="middle" class="mono" style="font-size:17px;font-weight:600;fill:var(--foreground)">${eur0(tot)}</text></svg>
-    <div class="pie-l">${items.map(x => `<div class="between sm"><span class="row" style="min-width:0"><i style="background:${x.c}"></i><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(x.n)}</span></span><span class="mono" style="white-space:nowrap">${eur0(x.v)} <span class="muted">· ${Math.round(x.v / tot * 100)}%</span></span></div>`).join("")}</div></div>`;
+  el.innerHTML = `<div class="pie"><svg viewBox="0 0 200 200" role="img" aria-label="Uscite di ${esc(mLong(S.month))} per categoria">${arcs}<text x="100" y="94" text-anchor="middle" style="font-size:11px;fill:var(--muted-foreground)">Totale</text><text x="100" y="114" text-anchor="middle" class="mono" style="font-size:17px;font-weight:600;fill:var(--foreground)">${eur0(tot)}</text></svg>
+    <div class="pie-l">${items.map(x => `<div class="between sm"><span class="row" style="min-width:0"><i style="background:${x.c}"></i><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${x.b ? "font-weight:600" : ""}">${esc(x.n)}</span></span><span class="mono" style="white-space:nowrap">${eur0(x.v)} <span class="muted">· ${Math.round(x.v / tot * 100)}%</span></span></div>`).join("")}</div></div>`;
 }
 function drawCatTrend() {
   const el = $("#tcatc"); if (!el) return;
