@@ -732,6 +732,25 @@ function perDayHtml(r, left) {
   const free = left - fixedLeft, pd = free / days;
   return `<div class="perday" title="${esc(`${eur(free)} liberi (disponibile meno ${eur(fixedLeft)} di voci fisse ancora da pagare) diviso ${days} ${days === 1 ? "giorno" : "giorni"}`)}"><b class="mono" style="color:${pd < 0 ? "var(--destructive)" : "var(--foreground)"}">${eur(Math.max(pd, pd < 0 ? pd : 0))}</b><span>al giorno · ${days === 1 ? "ultimo giorno" : `per ${days} giorni`}</span></div>`;
 }
+/* riepilogo di un mese chiuso: risparmio, confronto con il mese prima, categorie migliori e peggiori */
+function summaryHtml(r) {
+  if (!r.isPast || !S.txLoaded || !S.tx.length) return "";
+  const cons = r.rows.filter(x => x.c.group !== "ris").reduce((a, x) => a + x.s, 0);
+  const pm = addMonth(S.month, -1), legacy = S.expTx.some(t => t.month === pm && String(t.cat).startsWith("leg_"));
+  const pcons = S.expTx.filter(t => t.month === pm && !t.from && t.cat !== "fondo" && catById(t.cat)?.group !== "ris").reduce((a, t) => a + (Number(t.amount) || 0), 0)
+    + S.expTx.filter(t => t.month === pm && String(t.cat).startsWith("leg_")).reduce((a, t) => a + (Number(t.amount) || 0), 0);
+  const ris = r.rows.filter(x => x.c.group === "ris").reduce((a, x) => a + x.s, 0), rate = r.income > 0 ? ris / r.income : 0;
+  const vars = r.rows.filter(x => x.c.group !== "ris" && !x.c.fixed && !isAuto(x.c) && x.b > 0);
+  const over = vars.filter(x => x.s > x.b + 0.5).sort((a, b) => (b.s - b.b) - (a.s - a.b)).slice(0, 3);
+  const under = vars.filter(x => x.b - x.s > 0.5).sort((a, b) => (b.b - b.s) - (a.b - a.s)).slice(0, 3);
+  const d = pcons && !legacy ? cons - pcons : null, saldo = r.income - r.spentTot;
+  const li = (x, good) => `<div class="between sm"><span class="row" style="gap:8px"><span class="cic g-${x.c.group}">${ic(catIcon(x.c.id))}</span>${esc(x.c.name)}</span><span class="mono" style="color:${good ? "var(--success)" : "var(--destructive)"}">${good ? "−" + eur0(x.b - x.s) : "+" + eur0(x.s - x.b)}</span></div>`;
+  return `<div class="card summ"><div class="card-h"><div><div class="card-t">Com'è andato ${esc(mLong(S.month))}</div><div class="card-d">${saldo >= 0 ? `Chiuso con <b class="mono" style="color:var(--success)">${eur0(saldo)}</b> di avanzo rispetto alle entrate` : `Chiuso con <b class="mono" style="color:var(--destructive)">${eur0(-saldo)}</b> oltre le entrate`}</div></div></div>
+    <div class="card-c stack" style="gap:14px">
+      <div class="stats"><div class="stat" style="padding:0"><div class="l">Spese (senza risparmi)</div><div class="v mono">${eur0(cons)}</div>${d != null ? `<div class="xs mono" style="color:${d > 0 ? "var(--destructive)" : "var(--success)"}">${sgn(d)} vs ${esc(mShort(pm))}</div>` : ""}</div><div class="stat" style="padding:0"><div class="l">Messi da parte</div><div class="v mono">${eur0(ris)}</div></div><div class="stat" style="padding:0"><div class="l">Tasso di risparmio</div><div class="v mono" style="color:${rate >= 0.2 ? "var(--success)" : "var(--foreground)"}">${Math.round(rate * 100)}%</div></div></div>
+      ${over.length || under.length ? `<div class="grid2" style="align-items:start">${over.length ? `<div class="stack" style="gap:6px"><div class="xs muted">Oltre il budget</div>${over.map(x => li(x, false)).join("")}</div>` : ""}${under.length ? `<div class="stack" style="gap:6px"><div class="xs muted">Sotto il budget</div>${under.map(x => li(x, true)).join("")}</div>` : ""}</div>` : ""}
+    </div></div>`;
+}
 /* spese variabili cumulate giorno per giorno contro il ritmo ideale del loro budget */
 function dailyHtml(r) {
   if (!r.isCur && !r.isPast) return "";
@@ -763,6 +782,8 @@ function viewMese() {
   const pct = r.budTot ? Math.round(r.spentTot / r.budTot * 100) : 0;
   let h = "";
   if (bud.draft && S.budgetLoaded) h += `<div class="alert"><div class="row" style="align-items:flex-start">${ic("info")}<div><div class="t">Budget di ${esc(mLong(S.month))} da confermare</div><div class="muted sm">Per ora uso ${bud.from ? "quello di " + esc(mLong(bud.from)) : "i valori predefiniti"}.</div></div></div><button class="btn b-outline b-sm" data-act="goto-budget">Rivedi budget</button></div>`;
+  h += summaryHtml(r);
+  if (S.month === curMonth() && new Date().getDate() <= 7 && S.cfg.startMonth && addMonth(S.month, -1) >= S.cfg.startMonth) h += `<div class="alert"><div class="row" style="align-items:flex-start">${ic("chart")}<div><div class="t">Com'è andato ${esc(mLong(addMonth(S.month, -1)))}?</div><div class="muted sm">Il riepilogo del mese appena chiuso</div></div></div><button class="btn b-outline b-sm" data-act="go-prev">Vedi riepilogo</button></div>`;
   { const mc = monthToClose(); const show = (S.month === curMonth() && mc) ? mc : (S.month < curMonth() && S.cfg.startMonth && S.month >= S.cfg.startMonth && !isClosed(S.month) ? S.month : null);
     if (show) h += `<div class="alert"><div class="row" style="align-items:flex-start">${ic("check")}<div><div class="t">Chiudi ${esc(mLong(show))}</div><div class="muted sm">Calcola l'avanzo e registra i versamenti di ${esc(mLong(addMonth(show, 1)))} in un passaggio</div></div></div><button class="btn b-default b-sm" data-act="cl-open" data-m="${esc(show)}">Chiudi il mese</button></div>`;
     else if (isClosed(S.month)) { const cl = S.cfg.closed[S.month]; h += `<div class="xs muted row" style="gap:6px">${ic("check")}Mese chiuso il ${esc(fmtDate(cl.date))}${cl.avanzo ? ` · avanzo ${eur(cl.avanzo)}` : ""}</div>`; } }
@@ -1877,6 +1898,7 @@ document.addEventListener("click", async e => {
   if (act === "tax-undo") { if (S.taxUndo !== a.dataset.id) { S.taxUndo = a.dataset.id; render(); return; }
     const t = S.taxTx.find(x => x.id === a.dataset.id); S.taxUndo = null; if (!t) return;
     try { await S.db.doc("tx/" + t.id).delete(); if (t.dlId) { const cfg = structuredClone(S.cfg); const d = cfg.tax?.deadlines?.find(x => x.id === t.dlId); if (d) { d.paid = false; await S.db.doc("config/main").set(cfg); S.cfg = cfg; } } render(); toast("Pagamento annullato"); } catch (er) { fail(er); } return; }
+  if (act === "go-prev") { $("#prevM").click(); return; }
   if (act === "cl-open") return openClose(a.dataset.m);
   if (act === "cl-close") return closeClose();
   if (act === "cl-save") return saveClose();
