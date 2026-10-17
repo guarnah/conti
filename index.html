@@ -169,6 +169,8 @@ svg.i{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-widt
 .cic.g-ris{background:color-mix(in oklab,var(--chart-3) 18%,transparent);color:var(--chart-3)}
 .cic.g-fondo{background:var(--muted);color:var(--muted-foreground)}
 .qtile[aria-pressed="true"] .cic{background:color-mix(in oklab,var(--primary-foreground) 22%,transparent);color:var(--primary-foreground)}
+.clstep{display:flex;gap:12px;align-items:flex-start}
+.cln{width:24px;height:24px;border-radius:50%;background:var(--primary);color:var(--primary-foreground);display:grid;place-items:center;font-size:12px;font-weight:600;flex:none;margin-top:1px}
 .qgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
 .qtile{display:flex;flex-direction:column;align-items:flex-start;gap:8px;padding:10px 11px;min-height:62px;border:1px solid var(--border);border-radius:var(--radius);background:var(--card);color:var(--foreground);font:inherit;font-size:13px;font-weight:500;text-align:left;cursor:pointer;line-height:1.25}
 .qtile span:last-child{overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
@@ -761,6 +763,9 @@ function viewMese() {
   const pct = r.budTot ? Math.round(r.spentTot / r.budTot * 100) : 0;
   let h = "";
   if (bud.draft && S.budgetLoaded) h += `<div class="alert"><div class="row" style="align-items:flex-start">${ic("info")}<div><div class="t">Budget di ${esc(mLong(S.month))} da confermare</div><div class="muted sm">Per ora uso ${bud.from ? "quello di " + esc(mLong(bud.from)) : "i valori predefiniti"}.</div></div></div><button class="btn b-outline b-sm" data-act="goto-budget">Rivedi budget</button></div>`;
+  { const mc = monthToClose(); const show = (S.month === curMonth() && mc) ? mc : (S.month < curMonth() && S.cfg.startMonth && S.month >= S.cfg.startMonth && !isClosed(S.month) ? S.month : null);
+    if (show) h += `<div class="alert"><div class="row" style="align-items:flex-start">${ic("check")}<div><div class="t">Chiudi ${esc(mLong(show))}</div><div class="muted sm">Calcola l'avanzo e registra i versamenti di ${esc(mLong(addMonth(show, 1)))} in un passaggio</div></div></div><button class="btn b-default b-sm" data-act="cl-open" data-m="${esc(show)}">Chiudi il mese</button></div>`;
+    else if (isClosed(S.month)) { const cl = S.cfg.closed[S.month]; h += `<div class="xs muted row" style="gap:6px">${ic("check")}Mese chiuso il ${esc(fmtDate(cl.date))}${cl.avanzo ? ` · avanzo ${eur(cl.avanzo)}` : ""}</div>`; } }
   if (S.month === curMonth()) for (const d of taxStatus().open.filter(d => d.date <= addDaysISO(todayISO(), 10))) h += `<div class="alert"><div class="row" style="align-items:flex-start">${ic("receipt")}<div><div class="t">${esc(d.name)}: scade ${d.date === todayISO() ? "oggi" : d.date < todayISO() ? "il " + esc(fmtDateS(d.date)) + " (scaduta)" : "il " + esc(fmtDateS(d.date))}</div><div class="muted sm">${Number(d.amount) ? `<span class="mono">${eur(d.amount)}</span> · ` : ""}${d.pot === false ? "dal conto" : "dalla quota tasse"}</div></div></div><div class="row" style="gap:6px"><button class="btn b-default b-sm" data-act="tax-pay" data-id="${esc(d.id)}">Pagata</button><button class="btn b-outline b-sm" data-tab="entrate">Tasse</button></div></div>`;
   if (S.month === curMonth()) for (const x of expiredSubs()) h += `<div class="alert"><div class="row" style="align-items:flex-start">${ic("cal")}<div><div class="t">${esc(x.name)} è scaduto ${x.renew === todayISO() ? "oggi" : "il " + esc(fmtDateS(x.renew))}</div><div class="muted sm">${esc(eur(x.amount) + " " + freqOf(x.cat === SUBCAT ? 1 : perMonths(x)).per)} · vuoi rinnovarlo o interromperlo?</div></div></div><div class="row" style="gap:6px;flex-wrap:wrap"><button class="btn b-default b-sm" data-act="sub-renew" data-id="${esc(x.id)}">Rinnova</button><button class="btn b-outline b-sm" data-act="sub-stop" data-id="${esc(x.id)}">Interrompi</button></div></div>`;
   if (restCat() && started(S.month)) { const rr = restFor(bud.cats), mn = restMin(), rn = catById(restCat()).name;
@@ -890,6 +895,74 @@ function potsMini() {
   const tot = pl.reduce((a, p) => a + p.avail, 0);
   return `<div class="card wide-only"><div class="card-h"><div><div class="card-t row"><span class="gd g-ris"></span>Salvadanai</div><div class="card-d">Totale da parte <span class="mono">${eur0(tot)}</span></div></div><button class="btn b-ghost b-sm" data-tab="salvadanai">Apri</button></div><div class="card-c flush">` +
     pl.map(p => { const g = goalInfo(p.c, p); return `<button class="crow" data-act="open-pot" data-id="${esc(p.c.id)}"><div class="between"><span class="nm">${esc(p.c.name)}</span><span class="vl mono"><b style="color:${p.avail < 0 ? "var(--destructive)" : "var(--foreground)"}">${eur0(p.avail)}</b>${g ? ` / ${eur0(g.goal)}` : ""}</span></div>${g ? progHtml(p.avail, g.goal) : ""}</button>`; }).join(`<div class="sep"></div>`) + `</div></div>`;
+}
+/* ---------- chiusura del mese ---------- */
+const lastDay = m => `${m}-${pad(daysIn(m))}`;
+const isClosed = m => !!S.cfg?.closed?.[m];
+/* quale mese proporre di chiudere: il corrente dal 24, oppure il precedente se non è chiuso */
+function monthToClose() {
+  const cur = curMonth(), prev = addMonth(cur, -1), day = new Date().getDate();
+  if (S.cfg?.startMonth && prev >= S.cfg.startMonth && !isClosed(prev) && day <= 10) return prev;
+  if (day >= 24 && !isClosed(cur)) return cur;
+  return null;
+}
+function closeItems(m) {
+  const next = addMonth(m, 1), done = new Set(S.expTx.filter(t => t.month === next && t.recId).map(t => t.recId));
+  const rec = (S.cfg.recurring || []).filter(x => catById(x.cat)?.group === "ris" && !isRest(catById(x.cat)) && !done.has(x.id)).map(x => ({key:x.id, recId:x.id, cat:x.cat, name:x.name, amount:Number(x.amount) || 0, on:true, auto:/pension/i.test(x.cat + " " + x.name)}));
+  const recCats = new Set((S.cfg.recurring || []).map(x => x.cat));
+  const extraPots = pots().filter(c => !isRest(c) && !recCats.has(c.id) && Number(c.defaultBudget) > 0 && !S.expTx.some(t => t.month === next && t.cat === c.id)).map(c => ({key:"pot_" + c.id, cat:c.id, name:c.name, amount:Number(c.defaultBudget), on:true}));
+  const restRec = (S.cfg.recurring || []).find(x => isRest(catById(x.cat)) && !done.has(x.id));
+  const min = restRec ? [{key:restRec.id, recId:restRec.id, cat:restRec.cat, name:restRec.name + " (minimo)", amount:Number(restRec.amount) || 0, on:true}] : [];
+  return [...rec, ...min, ...extraPots];
+}
+let closeState = null;
+function openClose(m) {
+  const reserve = taxStatus().open.filter(d => d.pot === false && d.date <= addDaysISO(lastDay(addMonth(m, 1)), 0) && d.date > lastDay(m)).map(d => ({name:d.name, date:d.date, amount:Number(d.amount) || 0}));
+  closeState = {m, saldo:"", soglia:String(S.cfg.closeThreshold ?? 3000), reserve, items:closeItems(m), avanzoStr:null, step:1};
+  const bg = document.createElement("div"); bg.className = "ovl"; bg.id = "clBg";
+  bg.innerHTML = `<div class="drawer" role="dialog" aria-modal="true" aria-labelledby="clTitle" id="cld"></div>`;
+  document.body.appendChild(bg); document.body.style.overflow = "hidden";
+  bg.addEventListener("click", e => { if (e.target === bg) closeClose(); });
+  drawClose(); enableSwipeClose(bg, closeClose);
+}
+function closeClose() { closeOverlay("clBg"); closeState = null; }
+function closeCalc() {
+  const x = closeState, saldo = parseAmt(x.saldo), soglia = parseAmt(x.soglia) || 0, res = x.reserve.reduce((a, d) => a + d.amount, 0);
+  const fixed = x.items.filter(i => i.on).reduce((a, i) => a + i.amount, 0);
+  const auto = isFinite(saldo) ? Math.max(0, saldo - soglia - res - fixed) : 0;
+  const avanzo = x.avanzoStr != null && x.avanzoStr !== "" ? Math.max(0, parseAmt(x.avanzoStr) || 0) : auto;
+  return {saldo, soglia, res, fixed, auto, avanzo, ok:isFinite(saldo)};
+}
+function readClose() { const x = closeState; if (!x) return; if ($("#clSaldo")) x.saldo = $("#clSaldo").value; if ($("#clSoglia")) x.soglia = $("#clSoglia").value; if ($("#clAv")) x.avanzoStr = $("#clAv").value === "" ? null : $("#clAv").value; document.querySelectorAll("#cld [data-cli]").forEach(r => { const it = x.items[Number(r.dataset.cli)]; it.on = r.querySelector("input[type=checkbox]").checked; const v = parseAmt(r.querySelector("[data-f=amt]").value); if (isFinite(v)) it.amount = v; }); }
+function drawClose() {
+  const el = $("#cld"), x = closeState; if (!el || !x) return; const c = closeCalc(), next = addMonth(x.m, 1), rest = catById(restCat())?.name || "Salvadanaio";
+  el.innerHTML = `<div class="handle-zone"><div class="handle"></div></div>
+    <div class="between"><div><h2 id="clTitle" style="font-size:17px;font-weight:600">Chiudi ${esc(mLong(x.m))}</h2><p class="muted sm">Avanzo del mese e versamenti di ${esc(mLong(next))}</p></div><button class="btn b-ghost b-icon b-sm" data-act="cl-close" aria-label="Chiudi">${ic("x")}</button></div>
+    <div class="clstep"><div class="cln">1</div><div class="stack grow" style="gap:10px"><div style="font-weight:600">Saldo del conto corrente</div>
+      <div class="grid2"><div class="field"><label for="clSaldo">Saldo adesso, con la borsa arrivata €</label><input id="clSaldo" class="inp mono" inputmode="decimal" placeholder="es. 4.200" value="${esc(x.saldo)}"></div><div class="field"><label for="clSoglia">Da tenere sul conto €</label><input id="clSoglia" class="inp mono" inputmode="decimal" value="${esc(x.soglia)}"></div></div>
+      ${x.reserve.length ? `<div class="xs muted">Da pagare dal conto prima della prossima borsa: ${x.reserve.map(d => `${esc(d.name)} ${eur(d.amount)} (${esc(fmtDateS(d.date))})`).join(", ")} · tenuto da parte in più</div>` : ""}</div></div>
+    <div class="clstep"><div class="cln">2</div><div class="stack grow" style="gap:8px"><div style="font-weight:600">Versamenti di ${esc(mLong(next))}</div>
+      ${x.items.length ? x.items.map((it, i) => `<label class="between sm" data-cli="${i}" style="gap:10px;cursor:pointer"><span class="row" style="gap:8px;min-width:0"><input type="checkbox" ${it.on ? "checked" : ""}><span class="cic g-ris">${ic(catIcon(it.cat))}</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.name)}${it.auto ? ` <span class="muted xs">· addebito automatico</span>` : ""}</span></span><input class="inp num mono" data-f="amt" inputmode="decimal" style="width:96px" value="${esc(String(it.amount).replace(".", ","))}"></label>`).join("") : `<div class="xs muted">Nessun versamento fisso da fare.</div>`}</div></div>
+    <div class="clstep"><div class="cln">3</div><div class="stack grow" style="gap:8px"><div style="font-weight:600">Avanzo di ${esc(mLong(x.m))} → ${esc(rest)}</div>
+      <div class="between sm"><span class="muted">Saldo − da tenere${c.res ? " − pagamenti dal conto" : ""} − versamenti</span><b class="mono">${c.ok ? eur(c.auto) : "—"}</b></div>
+      <div class="field"><label for="clAv">Avanzo da spostare €</label><input id="clAv" class="inp mono" inputmode="decimal" placeholder="${c.ok ? esc(String(r2(c.auto)).replace(".", ",")) : "scrivi prima il saldo"}" value="${esc(x.avanzoStr ?? "")}"></div></div></div>
+    <div class="card card-c stack" style="gap:6px;padding:12px"><div class="xs muted">Bonifici da fare</div>${[...x.items.filter(i => i.on && i.amount > 0 && !i.auto).map(i => [i.name, i.amount]), ...(c.avanzo > 0 ? [[`${rest} (avanzo)`, c.avanzo]] : [])].map(([n, v]) => `<div class="between sm"><span>${esc(n)}</span><b class="mono">${eur(v)}</b></div>`).join("") || `<div class="sm muted">Nessuno</div>`}
+      <div class="sep" style="margin:4px 0"></div><div class="between sm"><span>Totale dal conto</span><b class="mono">${eur(c.fixed + c.avanzo)}</b></div>${x.items.some(i => i.on && i.auto) ? `<div class="xs muted">Compresi gli addebiti automatici, che si registrano ma non richiedono un bonifico.</div>` : ""}</div>
+    <div class="dfoot"><span class="grow"></span><button class="btn b-outline" data-act="cl-close">Più tardi</button><button class="btn b-default" data-act="cl-save" id="clSave">${ic("check")}Registra e chiudi il mese</button></div>`;
+}
+async function saveClose() {
+  readClose(); const x = closeState, c = closeCalc(), next = addMonth(x.m, 1), now = Date.now();
+  if (!c.ok && x.avanzoStr == null) return toast("Scrivi il saldo del conto");
+  $("#clSave").disabled = true;
+  try {
+    let k = 0;
+    for (const it of x.items.filter(i => i.on && i.amount > 0)) await S.db.collection("tx").doc().set({kind:"exp", cat:it.cat, amount:r2(it.amount), date:next + "-01", month:next, note:it.name, tag:"", ...(it.recId ? {recId:it.recId} : {}), created:now + k++});
+    if (c.avanzo > 0 && restCat()) await S.db.collection("tx").doc().set({kind:"exp", cat:restCat(), amount:r2(c.avanzo), date:lastDay(x.m), month:x.m, note:"Avanzo di " + mLong(x.m), tag:"", created:now + k++});
+    const cfg = structuredClone(S.cfg); cfg.closed = {...(cfg.closed || {}), [x.m]:{date:todayISO(), avanzo:r2(c.avanzo), saldo:c.ok ? r2(c.saldo) : null}};
+    const th = parseAmt(x.soglia); if (isFinite(th)) cfg.closeThreshold = r2(th);
+    await S.db.doc("config/main").set(cfg); S.cfg = cfg;
+    closeClose(); render(); toast(`${mLong(x.m)} chiuso · ${k} versamenti registrati`);
+  } catch (e) { fail(e); const b = $("#clSave"); if (b) b.disabled = false; }
 }
 /* ---------- patrimonio: saldi dei conti a fine mese ---------- */
 const nwTotal = snap => Object.values(snap?.balances || {}).reduce((a, v) => a + (Number(v) || 0), 0);
@@ -1804,6 +1877,9 @@ document.addEventListener("click", async e => {
   if (act === "tax-undo") { if (S.taxUndo !== a.dataset.id) { S.taxUndo = a.dataset.id; render(); return; }
     const t = S.taxTx.find(x => x.id === a.dataset.id); S.taxUndo = null; if (!t) return;
     try { await S.db.doc("tx/" + t.id).delete(); if (t.dlId) { const cfg = structuredClone(S.cfg); const d = cfg.tax?.deadlines?.find(x => x.id === t.dlId); if (d) { d.paid = false; await S.db.doc("config/main").set(cfg); S.cfg = cfg; } } render(); toast("Pagamento annullato"); } catch (er) { fail(er); } return; }
+  if (act === "cl-open") return openClose(a.dataset.m);
+  if (act === "cl-close") return closeClose();
+  if (act === "cl-save") return saveClose();
   if (act === "nw-edit") return openNw();
   if (act === "nw-close") return closeNw();
   if (act === "nw-save") return saveNw();
@@ -1854,6 +1930,7 @@ document.addEventListener("click", async e => {
 document.addEventListener("input", e => {
   const t = e.target;
   if (t.id === "msearch") { S.q = t.value; render(); return; }
+  if (t.closest?.("#cld")) { readClose(); const pos = t.selectionStart, id = t.id, cli = t.closest("[data-cli]")?.dataset.cli; drawClose(); const el = id ? document.getElementById(id) : document.querySelector(`#cld [data-cli="${cli}"] [data-f=amt]`); if (el) { el.focus(); try { el.setSelectionRange(pos, pos); } catch {} } return; }
   if (t.closest?.("#nwd") && t.dataset.f === "v") { readNw(); const el = $("#nwTot"); if (el) el.textContent = eur(nwState.rows.reduce((a, x) => a + (parseAmt(x.v) || 0), 0)); }
   if (t.id === "sNote" && sheetState && sheetState.kind !== "inc" && !sheetState.id && (!sheetState.cat || sheetState.catAuto)) {
     const r = ruleFor(t.value), pos = t.selectionStart;
@@ -1875,6 +1952,7 @@ document.addEventListener("input", e => {
   if (t.id === "sAmt" && sheetState?.kind === "inc" && !isExtraSrc(sheetState.src)) { const src = srcById(sheetState.src); const n = $("#sNet"); const v = parseAmt(t.value); if (n && src) n.innerHTML = isFinite(v) ? `Netto (${src.pct}%) <b class="mono" style="color:var(--foreground)">${eur(v * src.pct / 100)}</b> · da mettere nella quota tasse <b class="mono" style="color:var(--foreground)">${eur(v * taxCfg().rate / 100)}</b>` : `Netto al ${src.pct}% del fatturato`; }
 });
 document.addEventListener("change", e => {
+  if (e.target.closest?.("#cld") && e.target.type === "checkbox") { readClose(); drawClose(); return; }
   if (e.target.id === "abAuto" && subState?.item && $("#abHint")) { readSubInputs(); $("#abHint").innerHTML = subHint(subState.item); }
   if (e.target.id === "fcat") { S.catFilter = e.target.value; render(); }
   if (e.target.id === "ftag") { if (e.target.value) openTag(e.target.value); }
@@ -1894,6 +1972,7 @@ document.addEventListener("change", e => {
     x0 = null; }, {passive:true}); })();
 document.addEventListener("keydown", e => {
   if (nwState) { if (e.key === "Escape") closeNw(); return; }
+  if (closeState) { if (e.key === "Escape") closeClose(); return; }
   if (S.taxEdit) { if (e.key === "Escape") closeTaxEdit(); if (e.key === "Enter" && e.target.tagName === "INPUT") { e.preventDefault(); saveTax(false); } return; }
   if (potState) { if (e.key === "Escape") closePotEdit(); if (e.key === "Enter" && e.target.tagName === "INPUT" && e.target.type !== "checkbox") { e.preventDefault(); savePot(); } return; }
   if (subState) { if (e.key === "Escape") closeSubs(); if (e.key === "Enter" && e.target.tagName === "INPUT" && subState.mode === "edit") { e.preventDefault(); saveSub(); } return; }
