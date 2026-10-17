@@ -1048,9 +1048,9 @@ function viewEntrate() {
   const tot = list.reduce((a, t) => a + (Number(t.amount) || 0), 0);
   return `<div id="entrate" class="stack">
   <div class="between" style="align-items:flex-end;gap:12px"><div><h1 class="pt">Entrate</h1><p class="muted sm">Borsa, fatture e altre entrate</p></div><button class="btn b-default b-sm" data-act="inc-new" style="flex:none">${ic("plus")}Nuova entrata</button></div>
-  <div class="card hero"><div class="card-c stack" style="gap:14px"><div><div class="lbl">Entrate mensili di ${esc(mLong(S.month))}</div><div class="big mono">${eur(inc.monthly)}</div></div>
+  <div class="card hero"><div class="card-c stack" style="gap:14px"><div><div class="lbl has-tip" tabindex="0" aria-describedby="incTip2" style="display:inline-block">Entrate mensili di ${esc(mLong(S.month))} <span class="tip-i" aria-hidden="true">?</span><div class="tip" role="tooltip" id="incTip2">Le fatture contano per 1/12 del netto per 12 mesi: oggi il totale degli ultimi 12 mesi è <span class="mono">${eur0(inc.pool)}</span>. Le entrate extra contano solo nel mese in cui arrivano. La borsa entra da sola ogni mese.</div></div><div class="big mono">${eur(inc.monthly)}</div></div>
     <div class="stats"><div class="stat" style="padding:0"><div class="l">Fissi (borsa)</div><div class="v mono">${eur0(inc.fixed)}</div></div><div class="stat" style="padding:0"><div class="l">Fatture ÷ 12</div><div class="v mono">${eur0(inc.pool / 12)}</div></div><div class="stat" style="padding:0"><div class="l">Extra del mese</div><div class="v mono">${eur0(inc.extra)}</div></div></div>
-    <p class="xs muted">Le fatture contano per 1/12 del netto per 12 mesi: oggi il totale degli ultimi 12 mesi è <span class="mono">${eur0(inc.pool)}</span>. Le entrate extra contano solo nel mese in cui arrivano. La borsa entra da sola ogni mese.</p></div></div>
+</div></div>
   <div class="card"><div class="card-h"><div><div class="card-t">Registrate a ${esc(mLong(S.month))}</div><div class="card-d">${list.length ? `${list.length} ${list.length === 1 ? "entrata" : "entrate"} · netto <span class="mono">${eur(tot)}</span>` : "Nessuna entrata registrata"}</div></div></div>
     ${list.length ? `<div class="card-c flush">${list.map(txRow).join("")}</div>` : ""}</div>
   ${sourcesCard(c)}
