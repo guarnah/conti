@@ -176,7 +176,7 @@ svg.i{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-widt
 .togs.reps{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;margin-inline:-16px;padding-inline:16px}.togs.reps::-webkit-scrollbar{display:none}
 .tog.rep{gap:6px;flex:none}.tog.rep span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:170px}.tog.rep b{font-weight:500}.tog.rep svg{width:14px;height:14px;flex:none}
 #settings .sec{display:none}
-#settings[data-sec="annual"] .sec[data-sec="annual"],#settings[data-sec="categories"] .sec[data-sec="categories"],#settings[data-sec="recurring"] .sec[data-sec="recurring"],#settings[data-sec="general"] .sec[data-sec="general"]{display:flex;flex-direction:column;gap:16px}
+#settings[data-sec="rules"] .sec[data-sec="rules"],#settings[data-sec="annual"] .sec[data-sec="annual"],#settings[data-sec="categories"] .sec[data-sec="categories"],#settings[data-sec="recurring"] .sec[data-sec="recurring"],#settings[data-sec="general"] .sec[data-sec="general"]{display:flex;flex-direction:column;gap:16px}
 .settabs{width:100%;overflow-x:auto;scrollbar-width:none}.settabs::-webkit-scrollbar{display:none}
 .settabs .tab{white-space:nowrap}
 .sep{height:1px;background:var(--border);margin:0 12px}
@@ -1133,6 +1133,7 @@ const catOpts = v => cats().map(k => `<option value="${esc(k.id)}" ${k.id === v 
 const ROW = {
   hist: x => `<td><input class="inp" type="month" style="width:170px" data-f="m" value="${esc(x.m || "")}" aria-label="Mese"></td><td class="r"><input class="inp num" style="width:100px" data-f="g" inputmode="decimal" value="${esc(String(x.g ?? 0).replace(".", ","))}" aria-label="Lordo"></td><td class="r"><input class="inp num" style="width:100px" data-f="v" inputmode="decimal" value="${esc(String(x.v ?? 0).replace(".", ","))}" aria-label="Netto"></td><td>${delBtn}</td>`,
   annual: (a, paid) => `<td><input class="inp" style="min-width:140px" data-f="name" placeholder="Nuova voce" value="${esc(a.name || "")}" aria-label="Voce"></td><td class="r"><input class="inp num" style="width:92px" data-f="amount" inputmode="decimal" value="${esc(String(a.amount ?? 0).replace(".", ","))}" aria-label="Importo annuo"></td><td class="r"><input class="inp num" style="width:62px" data-f="share" inputmode="numeric" value="${esc(a.share ?? 100)}" aria-label="Tua quota percentuale"></td><td><select class="inp" style="width:84px" data-f="due" aria-label="Mese di scadenza">${monthOpts(a.due)}</select></td><td class="r mono muted" style="white-space:nowrap">${a.name ? eur((Number(a.amount) || 0) * ((a.share ?? 100) / 100) / 12) : ""}${paid ? `<br><span class="badge bd-success">pagato ${eur0(paid)}</span>` : ""}</td><td>${delBtn}</td>`,
+  rules: x => `<td><input class="inp" style="min-width:160px" data-f="match" placeholder="es. esselunga" value="${esc(x.match || "")}" aria-label="Testo nella nota"></td><td><select class="inp" style="min-width:170px" data-f="cat" aria-label="Categoria">${catOpts(x.cat)}</select></td><td>${delBtn}</td>`,
   recurring: x => `<td><input class="inp" style="min-width:140px" data-f="name" placeholder="Nuova ricorrente" value="${esc(x.name || "")}" aria-label="Voce"></td><td class="r"><input class="inp num" style="width:88px" data-f="amount" inputmode="decimal" value="${esc(String(x.amount ?? 0).replace(".", ","))}" aria-label="Importo"></td><td><select class="inp" style="min-width:150px" data-f="cat" aria-label="Categoria">${catOpts(x.cat)}</select></td><td>${delBtn}</td>`,
   sources: x => `<td><input class="inp" style="min-width:150px" data-f="name" placeholder="Nuova fonte" value="${esc(x.name || "")}" aria-label="Fonte"></td><td class="r"><input class="inp num" style="width:66px" data-f="pct" inputmode="numeric" value="${esc(x.pct ?? 80)}" aria-label="Percentuale netta"></td><td class="r"><input class="inp num" style="width:100px" data-f="fixed" inputmode="decimal" placeholder="—" value="${esc(x.fixed ? String(x.fixed).replace(".", ",") : "")}" aria-label="Importo fisso"></td><td class="r"><input class="inp num" style="width:100px" data-f="newAmt" inputmode="decimal" placeholder="—" value="${esc(lastChange(x) ? String(x.fixedChanges[lastChange(x)]).replace(".", ",") : "")}" aria-label="Nuovo importo fisso"></td><td><input class="inp" type="month" style="width:150px" data-f="from" value="${esc(lastChange(x))}" aria-label="Nuovo importo dal mese"></td><td>${delBtn}</td>`,
   categories: x => `<td><input class="inp" style="min-width:170px" data-f="name" placeholder="Nuova categoria" value="${esc(x.name || "")}" aria-label="Nome"></td><td><select class="inp" style="width:auto" data-f="group" aria-label="Area">${GROUPS.map(g => `<option value="${g.id}" ${g.id === x.group ? "selected" : ""}>${g.name}</option>`).join("")}</select></td><td><input type="checkbox" data-f="fixed" ${x.fixed ? "checked" : ""} aria-label="Spesa fissa"></td><td class="r"><input class="inp num" style="width:80px" data-f="defaultBudget" inputmode="decimal" value="${esc(x.defaultBudget || 0)}" aria-label="Budget base"></td><td><input type="checkbox" data-f="active" ${x.hidden ? "" : "checked"} aria-label="Attiva"></td>`
@@ -1143,11 +1144,12 @@ const tblCard = (kind, title, desc, heads, items, rowFn, addLbl, foot = "") => `
 function viewAltro() {
   const c = S.cfg; const yr = curMonth().slice(0, 4);
   const paidYr = id => S.fundTx.filter(t => t.annId === id && (t.month || "").startsWith(yr)).reduce((a, t) => a + (Number(t.amount) || 0), 0);
-  const sec = S.setSec || "annual", SECS = [["annual", "Annuali"], ["categories", "Categorie"], ["recurring", "Ricorrenti"], ["general", "Generale"]];
+  const sec = S.setSec || "annual", SECS = [["annual", "Annuali"], ["categories", "Categorie"], ["recurring", "Ricorrenti"], ["rules", "Regole"], ["general", "Generale"]];
   const th = (() => { try { return localStorage.getItem("conti-theme") || "auto"; } catch { return "auto"; } })();
   return `<div id="settings" class="stack" data-sec="${sec}">
   <div><h1 class="pt">Impostazioni</h1><p class="muted sm">Le modifiche si applicano dopo "Salva impostazioni".</p></div>
   <div class="tlist settabs" role="tablist" aria-label="Sezioni delle impostazioni">${SECS.map(([k, n]) => `<button class="tab" role="tab" data-act="set-sec" data-v="${k}" aria-selected="${k === sec}">${n}</button>`).join("")}</div>
+  <div class="sec" data-sec="rules">${tblCard("rules", "Regole automatiche", "Se la nota di una spesa contiene il testo, la categoria si sceglie da sola", [["La nota contiene"], ["Categoria"], [""]], c.rules || [], ROW.rules, "Aggiungi regola", `<p class="xs muted" style="margin-top:10px">Esempi: "esselunga" → Spesa alimentare, "q8" → Carburante. Non conta maiuscole e minuscole. Se nessuna regola corrisponde, l'app usa la categoria dell'ultima spesa con la stessa nota.</p>`)}</div>
   <div class="sec" data-sec="general"><div class="card"><div class="card-h"><div><div class="card-t">Aspetto</div><div class="card-d">Vale solo per questo dispositivo</div></div></div><div class="card-c"><div class="tlist" role="tablist" aria-label="Tema" style="width:auto;display:inline-grid">${[["auto", "Automatico"], ["light", "Chiaro"], ["dark", "Scuro"]].map(([k, n]) => `<button class="tab" role="tab" data-act="set-theme" data-v="${k}" aria-selected="${k === th}">${n}</button>`).join("")}</div></div></div></div>
   <div class="sec" data-sec="annual">
   ${tblCard("annual", "Spese annuali", `Accantonate ogni mese nel fondo · totale <span class="mono">${eur(monthlyAccrualAll())}</span>/mese, abbonamenti annuali inclusi`, [["Voce"], ["Annuo", "r"], ["Tua %", "r"], ["Scadenza"], ["Al mese", "r"], [""]], c.annual || [], a => ROW.annual(a, paidYr(a.id)), "Aggiungi voce",
@@ -1215,6 +1217,7 @@ function readSettings() {
   cfg.annual = rows("annual").filter(a => a.name.trim()).map(a => ({...prev("annual", a.id), id:a.id, name:a.name.trim(), amount:r2(parseAmt(a.amount) || 0), share:Math.max(0, Math.min(100, Number(a.share) || 0)), due:a.due ? Number(a.due) : null}));
   cfg.recurring = [...rows("recurring").filter(a => a.name.trim()).map(a => ({id:a.id, name:a.name.trim(), amount:r2(parseAmt(a.amount) || 0), cat:a.cat})), ...(S.cfg.recurring || []).filter(x => x.cat === SUBCAT)];
   cfg.categories = rows("categories").filter(a => a.name.trim()).map(a => ({...prev("categories", a.id), id:a.id, name:a.name.trim(), group:a.group, fixed:!!a.fixed, defaultBudget:r2(parseAmt(a.defaultBudget) || 0), hidden:!a.active}));
+  cfg.rules = rows("rules").filter(r => r.match.trim()).map(r => ({id:r.id, match:r.match.trim(), cat:r.cat}));
   rows("pot").forEach(p => { const k = cfg.categories.find(x => x.id === p.id); if (k) { k.potInitial = r2(parseAmt(p.init) || 0); k.pot = !!p.pot; } });
   cfg.fundInitial = r2(parseAmt($("#fundInitial").value) || 0);
   cfg.startMonth = $("#startMonth").value || cfg.startMonth;
@@ -1284,7 +1287,7 @@ function drawSheet(focus) {
     ${!isInc && st.cat === "fondo" ? `<div class="field"><label for="sAnn">Quale spesa annuale?</label><select id="sAnn" class="inp"><option value="">Scegli…</option>${(S.cfg.annual || []).map(a => `<option value="${esc(a.id)}" ${st.annId === a.id ? "selected" : ""}>${esc(a.name)}${a.sub ? " (abbonamento)" : ""}</option>`).join("")}</select></div>` : ""}
     <div class="grid2"><div class="field"><label for="sDate">Data</label><input id="sDate" class="inp" type="date" value="${esc(st.date)}"></div>
       <div class="field"><label for="sTag">Tag</label><input id="sTag" class="inp" list="tagList" placeholder="es. Londra" value="${esc(st.tag)}"><datalist id="tagList">${tags.map(t => `<option value="${esc(t)}">`).join("")}</datalist></div></div>
-    <div class="field"><label for="sNote">Nota</label><input id="sNote" class="inp" placeholder="${isInc ? (src?.kind === "extra" ? "es. Vinted, giacca" : "es. fattura n. 12") : "es. pranzo con colleghi"}" value="${esc(st.note)}"></div>
+    <div class="field"><label for="sNote">Nota</label><input id="sNote" class="inp" placeholder="${isInc ? (src?.kind === "extra" ? "es. Vinted, giacca" : "es. fattura n. 12") : "es. pranzo con colleghi"}" value="${esc(st.note)}">${st.catAuto && st.cat ? `<p class="xs muted" id="sRule" style="margin-top:4px">${ic("check")} Categoria scelta da ${esc(st.catAuto)}</p>` : `<p class="xs muted" id="sRule" style="margin-top:4px" hidden></p>`}</div>
     <div class="dfoot">
       ${st.id ? `<button class="btn ${st.confirmDel ? "b-destructive" : "b-dghost"}" data-act="s-del">${ic("trash")}${st.confirmDel ? "Conferma" : "Elimina"}</button>` : ""}
       <span class="grow"></span><button class="btn b-outline" data-act="s-close">Annulla</button><button class="btn b-default" data-act="s-save" id="sSave">Salva</button>
@@ -1312,6 +1315,15 @@ function lastExpenses() {
 function repeatHtml() {
   const l = lastExpenses(); if (!l.length) return "";
   return `<div class="field"><span class="lab">Ripeti una spesa recente</span><div class="togs reps">${l.map(t => `<button class="tog rep" data-act="s-repeat" data-id="${esc(t.id)}">${ic("repeat")}<span>${esc(catById(t.cat).name)}${t.note ? " · " + esc(t.note) : ""}</span><b class="mono">${eur(t.amount)}</b></button>`).join("")}</div></div>`;
+}
+/* categoria suggerita dalla nota: prima le regole, poi l'ultima spesa con la stessa nota */
+function ruleFor(note) {
+  const n = (note || "").trim().toLowerCase(); if (n.length < 2) return null;
+  const r = (S.cfg.rules || []).find(r => r.match && n.includes(r.match.toLowerCase()) && catById(r.cat));
+  if (r) return {cat:r.cat, why:`la regola «${r.match}»`};
+  if (n.length < 3) return null;
+  const t = [...S.expTx].sort((a, b) => (b.created || 0) - (a.created || 0)).find(t => (t.note || "").trim().toLowerCase() === n && catById(t.cat) && t.cat !== "fondo");
+  return t ? {cat:t.cat, why:"una spesa precedente con la stessa nota"} : null;
 }
 function readSheetInputs() {
   const st = sheetState; if (!st) return;
@@ -1605,7 +1617,7 @@ document.addEventListener("click", async e => {
   if (e.target.closest("#fab") || e.target.closest("#newBtn")) { if (S.cfg) openSheet(); return; }
   if (e.target.closest("#prevM") || e.target.closest("#nextM")) { S.enter = e.target.closest("#prevM") ? "right" : "left"; S.month = addMonth(S.month, e.target.closest("#prevM") ? -1 : 1); S.settingsDirty = false; S.tagAll = null; subscribeMonth(); render(); return; }
   const s = e.target.closest("[data-s]");
-  if (s && sheetState) { readSheetInputs(); sheetState[s.dataset.s] = s.dataset.v; if (s.dataset.s === "kind") { sheetState.cat = ""; sheetState.src = ""; sheetState.from = ""; }
+  if (s && sheetState) { readSheetInputs(); sheetState[s.dataset.s] = s.dataset.v; if (s.dataset.s === "cat") sheetState.catAuto = ""; if (s.dataset.s === "kind") { sheetState.cat = ""; sheetState.src = ""; sheetState.from = ""; }
     if (s.dataset.s === "src") { const src = srcById(s.dataset.v); if (src?.fixed && !sheetState.amountStr) sheetState.amountStr = String(src.fixed).replace(".", ","); }
     drawSheet(); return; }
   const a = e.target.closest("[data-act]"); if (!a) return;
@@ -1678,7 +1690,7 @@ document.addEventListener("click", async e => {
   if (act === "add-row") {
     S.settingsDirty = true; const kind = a.dataset.kind; const tb = a.closest(".card").querySelector("tbody");
     const tr = document.createElement("tr"); tr.dataset.row = kind; tr.dataset.id = kind.slice(0, 3) + "_" + Math.random().toString(36).slice(2, 8);
-    const blank = {hist:{}, annual:{share:100}, recurring:{cat:cats()[0]?.id}, sources:{pct:80}, categories:{group:"ext"}}[kind];
+    const blank = {hist:{}, annual:{share:100}, recurring:{cat:cats()[0]?.id}, rules:{cat:cats()[0]?.id}, sources:{pct:80}, categories:{group:"ext"}}[kind];
     tr.innerHTML = kind === "annual" ? ROW.annual(blank, 0) : ROW[kind](blank);
     tb.appendChild(tr); tr.querySelector("input")?.focus(); return;
   }
@@ -1703,6 +1715,11 @@ document.addEventListener("click", async e => {
 document.addEventListener("input", e => {
   const t = e.target;
   if (t.id === "msearch") { S.q = t.value; render(); return; }
+  if (t.id === "sNote" && sheetState && sheetState.kind !== "inc" && !sheetState.id && (!sheetState.cat || sheetState.catAuto)) {
+    const r = ruleFor(t.value), pos = t.selectionStart;
+    if (r && r.cat !== sheetState.cat) { readSheetInputs(); sheetState.cat = r.cat; sheetState.catAuto = r.why; drawSheet(); const n = $("#sNote"); if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch {} } }
+    else if (!r && sheetState.catAuto) { readSheetInputs(); sheetState.cat = ""; sheetState.catAuto = ""; drawSheet(); const n = $("#sNote"); if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch {} } }
+  }
   if (t.dataset?.bud != null && S.budgetDraft) {
     S.budgetDraft[t.dataset.bud] = parseAmt(t.value) || 0;
     const el = $("#btot"); if (el) el.textContent = eur0(budgetTotal());
