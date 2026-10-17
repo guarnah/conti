@@ -837,6 +837,7 @@ function viewMese() {
   { const mc = monthToClose(); const show = (S.month === curMonth() && mc) ? mc : (S.month < curMonth() && S.cfg.startMonth && S.month >= S.cfg.startMonth && !isClosed(S.month) ? S.month : null);
     if (show) h += `<div class="alert"><div class="row" style="align-items:flex-start">${ic("check")}<div><div class="t">Chiudi ${esc(mLong(show))}</div><div class="muted sm">Calcola l'avanzo e registra i versamenti di ${esc(mLong(addMonth(show, 1)))} in un passaggio</div></div></div><button class="btn b-default b-sm" data-act="cl-open" data-m="${esc(show)}">Chiudi il mese</button></div>`;
     else if (isClosed(S.month)) { const cl = S.cfg.closed[S.month]; h += `<div class="xs muted row" style="gap:6px">${ic("check")}Mese chiuso il ${esc(fmtDate(cl.date))}${cl.avanzo ? ` · avanzo ${eur(cl.avanzo)}` : ""}</div>`; } }
+  if (S.month === curMonth()) h += nwRemindAlert();
   if (S.month === curMonth()) for (const d of taxStatus().open.filter(d => d.date <= addDaysISO(todayISO(), 10))) h += `<div class="alert"><div class="row" style="align-items:flex-start">${ic("receipt")}<div><div class="t">${esc(d.name)}: scade ${d.date === todayISO() ? "oggi" : d.date < todayISO() ? "il " + esc(fmtDateS(d.date)) + " (scaduta)" : "il " + esc(fmtDateS(d.date))}</div><div class="muted sm">${Number(d.amount) ? `<span class="mono">${eur(d.amount)}</span> · ` : ""}${d.pot === false ? "dal conto" : "dalla quota tasse"}</div></div></div><div class="row" style="gap:6px"><button class="btn b-default b-sm" data-act="tax-pay" data-id="${esc(d.id)}">Pagata</button><button class="btn b-outline b-sm" data-tab="entrate">Tasse</button></div></div>`;
   if (S.month === curMonth()) for (const x of expiredSubs()) { const fund = x.cat !== SUBCAT && !x.sub, when = x.renew === todayISO() ? "oggi" : "il " + esc(fmtDateS(x.renew));
     h += `<div class="alert"><div class="row" style="align-items:flex-start">${ic(fund ? "receipt" : "cal")}<div><div class="t">${fund ? `${esc(x.name)}: scadenza ${when}` : `${esc(x.name)} è scaduto ${when}`}</div><div class="muted sm">${esc(eur(x.amount) + " " + freqOf(x.cat === SUBCAT ? 1 : perMonths(x)).per)} · ${fund ? "pagata? Registrala e aggiorna l'importo" : "vuoi rinnovarlo o interromperlo?"}</div></div></div><div class="row" style="gap:6px;flex-wrap:wrap"><button class="btn b-default b-sm" data-act="sub-renew" data-id="${esc(x.id)}">${fund ? "Pagata" : "Rinnova"}</button><button class="btn b-outline b-sm" data-act="sub-stop" data-id="${esc(x.id)}">${fund ? "Non c'è più" : "Interrompi"}</button></div></div>`; }
@@ -1052,6 +1053,34 @@ const nwShare = (snap, id) => { const v = snap?.shares?.[id] ?? (S.cfg?.accounts
 const nwMine = (snap, id) => (Number(snap?.balances?.[id]) || 0) * nwShare(snap, id) / 100;
 const nwTotal = snap => Object.keys(snap?.balances || {}).reduce((a, id) => a + nwMine(snap, id), 0);
 const nwRowMine = x => (parseAmt(x.v) || 0) * Math.min(100, Math.max(0, x.sh === "" || x.sh == null ? 100 : Number(String(x.sh).replace(",", ".")) || 0)) / 100;
+/* promemoria per aggiornare i saldi: giorno del mese scelto (31 = ultimo giorno) */
+const nwRemDue = (m = curMonth()) => { const d = Number(S.cfg?.nwRemind) || 0; return d ? `${m}-${String(Math.min(d, daysIn(m))).padStart(2, "0")}` : null; };
+function nwRemindDue() {
+  const due = nwRemDue(); if (!due || todayISO() < due) return null;
+  const last = S.nw.at(-1), ld = last ? (last.date || (last.month === curMonth() ? "9999-12-31" : last.month + "-01")) : "";
+  if (ld >= due) return null;
+  let sn = ""; try { sn = localStorage.getItem("conti-nw-snooze") || ""; } catch (e) {}
+  return sn >= todayISO() ? null : due;
+}
+const nwRemindAlert = () => { const due = nwRemindDue(); return due ? `<div class="alert"><div class="row" style="align-items:flex-start">${ic("wallet")}<div><div class="t">Aggiorna i saldi dei conti</div><div class="muted sm">Promemoria ${due === todayISO() ? "di oggi" : "del " + esc(fmtDateS(due))}: un minuto per tenere aggiornato il patrimonio</div></div></div><div class="row" style="gap:6px"><button class="btn b-default b-sm" data-act="nw-edit">Aggiorna saldi</button><button class="btn b-outline b-sm" data-act="nw-snooze">Domani</button></div></div>` : ""; };
+function nwRemindCard() {
+  const d = Number(S.cfg?.nwRemind) || 0;
+  return `<div class="card"><div class="card-c between" style="gap:10px;flex-wrap:wrap"><div class="row" style="gap:10px;align-items:flex-start">${ic("cal")}<div><div class="card-t" style="font-size:14px">Promemoria saldi</div><div class="card-d">${d ? `Ogni mese il ${d === 31 ? "ultimo giorno" : "giorno " + d}: avviso nell'app finché non aggiorni` : "Scegli il giorno del mese in cui ricordarti di aggiornare i saldi"}</div></div></div>
+    <div class="row" style="gap:8px;flex-wrap:wrap"><select id="nwRem" class="inp" style="width:auto" aria-label="Giorno del promemoria"><option value="">Nessun promemoria</option>${Array.from({length:28}, (_, i) => `<option value="${i + 1}" ${d === i + 1 ? "selected" : ""}>Giorno ${i + 1}</option>`).join("")}<option value="31" ${d === 31 ? "selected" : ""}>Ultimo giorno del mese</option></select>${d ? `<button class="btn b-outline b-sm" data-act="nw-ics" title="Scarica un evento ricorrente con avviso da aggiungere al calendario del telefono">${ic("cal")}Aggiungi al calendario</button>` : ""}</div></div></div>`;
+}
+function nwIcs() {
+  const d = Number(S.cfg?.nwRemind) || 0; if (!d) return;
+  let m = curMonth(); if (nwRemDue(m) < todayISO()) m = addMonth(m, 1);
+  const start = nwRemDue(m).replace(/-/g, ""), stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+/, "");
+  const ics = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Conti//IT", "BEGIN:VEVENT", "UID:conti-saldi-" + Date.now() + "@conti", "DTSTAMP:" + stamp, `DTSTART:${start}T090000`, `DTEND:${start}T091500`,
+    `RRULE:FREQ=MONTHLY;BYMONTHDAY=${d === 31 ? -1 : d}`, "SUMMARY:Aggiorna i saldi in Conti", "DESCRIPTION:Apri Conti > Patrimonio > Aggiorna saldi", "URL:" + location.href.split("#")[0],
+    "BEGIN:VALARM", "ACTION:DISPLAY", "DESCRIPTION:Aggiorna i saldi in Conti", "TRIGGER:PT0M", "END:VALARM", "END:VEVENT", "END:VCALENDAR"].join("\r\n");
+  const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([ics], {type:"text/calendar"})); a.download = "promemoria-saldi.ics"; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+async function saveNwRemind(v) {
+  const cfg = structuredClone(S.cfg); if (v) cfg.nwRemind = Number(v); else delete cfg.nwRemind;
+  try { await S.db.doc("config/main").set(cfg); S.cfg = cfg; render(); toast(v ? "Promemoria impostato" : "Promemoria tolto"); } catch (e) { fail(e); }
+}
 /* andamento dei singoli conti: una linea per conto, asse x proporzionale al tempo */
 function nwLines(ids, accs) {
   const pts = S.nw.map(x => ({d:x.date || x.month + "-01", b:Object.fromEntries(Object.keys(x.balances || {}).map(id => [id, nwMine(x, id)]))})).sort((a, b) => a.d.localeCompare(b.d));
@@ -1075,8 +1104,8 @@ function nwLines(ids, accs) {
 }
 function nwCard() {
   const accs = S.cfg.accounts || [], last = S.nw.at(-1), prev = S.nw.at(-2);
-  const head = `<div class="between" style="align-items:flex-end;gap:12px"><div><h1 class="pt">Patrimonio</h1><p class="muted sm">I tuoi conti e quanto hai da parte</p></div><button class="btn b-default b-sm" data-act="nw-edit" style="flex:none">${ic("check")}Aggiorna saldi</button></div>`;
-  if (!last) return head + `<div class="card empty">${ic("wallet")}<div>Inserisci i saldi dei tuoi conti (conto corrente, conti deposito, investimenti, fondo pensione): una volta al mese basta un minuto, e qui vedi come cresce il totale.</div><button class="btn b-default b-sm" data-act="nw-edit" style="margin-top:6px">${ic("plus")}Inserisci i saldi</button></div>`;
+  const head = `<div class="between" style="align-items:flex-end;gap:12px"><div><h1 class="pt">Patrimonio</h1><p class="muted sm">I tuoi conti e quanto hai da parte</p></div><button class="btn b-default b-sm" data-act="nw-edit" style="flex:none">${ic("check")}Aggiorna saldi</button></div>` + nwRemindAlert();
+  if (!last) return head + `<div class="card empty">${ic("wallet")}<div>Inserisci i saldi dei tuoi conti (conto corrente, conti deposito, investimenti, fondo pensione): una volta al mese basta un minuto, e qui vedi come cresce il totale.</div><button class="btn b-default b-sm" data-act="nw-edit" style="margin-top:6px">${ic("plus")}Inserisci i saldi</button></div>` + nwRemindCard();
   const tot = nwTotal(last), d = prev ? tot - nwTotal(prev) : null, tax = S.cfg.tax ? taxStatus().bal : 0;
   const rows = S.nw.slice(-12).map(x => ({label:mShort(x.month), v:nwTotal(x)}));
   const ids = [...new Set([...accs.map(a => a.id), ...Object.keys(last.balances || {})])];
@@ -1087,7 +1116,7 @@ function nwCard() {
   </div></div>
   <div class="card nwtrend"><div class="card-h"><div><div class="card-t">Andamento dei conti</div><div class="card-d">Si aggiorna a ogni nuovo inserimento dei saldi</div></div></div><div class="card-c" style="padding-top:6px">${nwLines([...new Set([...ids, ...S.nw.flatMap(x => Object.keys(x.balances || {}))])].filter(id => ids.includes(id) || accs.some(a => a.id === id)), accs)}</div></div>
   <div class="card"><div class="card-c flush">${ids.map(id => { const a = accs.find(x => x.id === id), v = nwMine(last, id), pv = prev ? nwMine(prev, id) : null, sh = nwShare(last, id);
-    return `<div class="trow" style="cursor:default;grid-template-columns:36px minmax(0,1fr) auto"><div class="ava g-ris">${ic("wallet")}</div><div class="grow"><div class="t1">${esc(a?.name || id)}</div>${a?.note || sh < 100 ? `<div class="t2">${[a?.note ? esc(a.note) : "", sh < 100 ? `tua quota ${sh}% di <span class="mono">${eur(Number(last.balances?.[id]) || 0)}</span>` : ""].filter(Boolean).join(" · ")}</div>` : ""}</div><div style="text-align:right"><div class="am mono">${eur(v)}</div>${pv != null && Math.abs(v - pv) > 0.5 ? `<div class="xs mono" style="color:${v < pv ? "var(--destructive)" : "var(--success)"}">${sgn(v - pv)}</div>` : ""}</div></div>`; }).join("")}</div></div>`;
+    return `<div class="trow" style="cursor:default;grid-template-columns:36px minmax(0,1fr) auto"><div class="ava g-ris">${ic("wallet")}</div><div class="grow"><div class="t1">${esc(a?.name || id)}</div>${a?.note || sh < 100 ? `<div class="t2">${[a?.note ? esc(a.note) : "", sh < 100 ? `tua quota ${sh}% di <span class="mono">${eur(Number(last.balances?.[id]) || 0)}</span>` : ""].filter(Boolean).join(" · ")}</div>` : ""}</div><div style="text-align:right"><div class="am mono">${eur(v)}</div>${pv != null && Math.abs(v - pv) > 0.5 ? `<div class="xs mono" style="color:${v < pv ? "var(--destructive)" : "var(--success)"}">${sgn(v - pv)}</div>` : ""}</div></div>`; }).join("")}</div></div>` + nwRemindCard();
 }
 let nwState = null;
 function openNw() {
@@ -2035,6 +2064,8 @@ document.addEventListener("click", async e => {
   if (act === "cl-close") return closeClose();
   if (act === "cl-save") return saveClose();
   if (act === "nw-edit") return openNw();
+  if (act === "nw-snooze") { try { localStorage.setItem("conti-nw-snooze", todayISO()); } catch (e) {} render(); return; }
+  if (act === "nw-ics") return nwIcs();
   if (act === "nw-close") return closeNw();
   if (act === "nw-save") return saveNw();
   if (act === "nw-add") { readNw(); nwState.rows.push({id:"acc_" + Math.random().toString(36).slice(2, 7), name:"", note:"", sh:"100", v:""}); drawNw(); return; }
@@ -2110,6 +2141,7 @@ document.addEventListener("change", e => {
   if (e.target.closest?.("#cld") && e.target.type === "checkbox") { readClose(); drawClose(); return; }
   if (e.target.id === "abAuto" && subState?.item && $("#abHint")) { readSubInputs(); $("#abHint").innerHTML = subHint(subState.item); }
   if (e.target.id === "fcat") { S.catFilter = e.target.value; render(); }
+  if (e.target.id === "nwRem") { saveNwRemind(e.target.value); return; }
   if (e.target.id === "sAnn" && sheetState) { readSheetInputs(); sheetState.covers = undefined; drawSheet(); }
   if (e.target.id === "ftag") { if (e.target.value) openTag(e.target.value); }
   if ((e.target.id === "backupFile" || e.target.id === "backupFile0") && e.target.files?.[0]) { const f = e.target.files[0]; f.text().then(async txt => { try { const n = await window.__cloud.importBackup(JSON.parse(txt)); S.trendCache = null; toast(`Importati ${n} elementi`); } catch (er) { console.error(er); toast("File di backup non valido"); } e.target.value = ""; }); }
