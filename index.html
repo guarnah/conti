@@ -162,6 +162,12 @@ svg.i{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-widt
 .stackbar{display:flex;gap:2px;height:10px;border-radius:999px;overflow:hidden}
 .stackbar i{display:block;height:100%}
 .mcols{display:flex;flex-direction:column;gap:16px}
+.qgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.qtile{display:flex;flex-direction:column;align-items:flex-start;gap:8px;padding:10px 11px;min-height:62px;border:1px solid var(--border);border-radius:var(--radius);background:var(--card);color:var(--foreground);font:inherit;font-size:13px;font-weight:500;text-align:left;cursor:pointer;line-height:1.25}
+.qtile span:last-child{overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.qtile[aria-pressed="true"]{background:var(--primary);color:var(--primary-foreground);border-color:var(--primary)}
+.togs.reps{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;margin-inline:-16px;padding-inline:16px}.togs.reps::-webkit-scrollbar{display:none}
+.tog.rep{gap:6px;flex:none}.tog.rep span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:170px}.tog.rep b{font-weight:500}.tog.rep svg{width:14px;height:14px;flex:none}
 #settings .sec{display:none}
 #settings[data-sec="annual"] .sec[data-sec="annual"],#settings[data-sec="categories"] .sec[data-sec="categories"],#settings[data-sec="recurring"] .sec[data-sec="recurring"],#settings[data-sec="general"] .sec[data-sec="general"]{display:flex;flex-direction:column;gap:16px}
 .settabs{width:100%;overflow-x:auto;scrollbar-width:none}.settabs::-webkit-scrollbar{display:none}
@@ -1167,7 +1173,9 @@ function enableSwipeClose(bg, close) {
 }
 let sheetState = null;
 function usageOrder() {
-  const cnt = {}; S.tx.forEach(t => { if (t.kind !== "inc") cnt[t.cat] = (cnt[t.cat] || 0) + 1; });
+  /* categorie più usate negli ultimi 90 giorni (spese inserite a mano, non le ricorrenti) */
+  const since = addDaysISO(todayISO(), -90), cnt = {};
+  [...S.expTx, ...S.tx].filter((t, i, arr) => arr.findIndex(u => u.id === t.id) === i).forEach(t => { if (t.kind !== "inc" && !t.recId && (t.date || "") >= since) cnt[t.cat] = (cnt[t.cat] || 0) + 1; });
   return cats().filter(c => !c.fixed || cnt[c.id]).map((c, i) => ({c, k:(cnt[c.id] || 0) * 100 - i})).sort((a, b) => b.k - a.k).map(x => x.c).concat(cats().filter(c => c.fixed && !cnt[c.id]));
 }
 function openSheet(tx, kind) {
@@ -1193,9 +1201,12 @@ function drawSheet(focus) {
     <div class="tlist" role="tablist" aria-label="Tipo"><button class="tab" role="tab" data-s="kind" data-v="exp" aria-selected="${!isInc}">${ic("out")}Uscita</button><button class="tab" role="tab" data-s="kind" data-v="inc" aria-selected="${isInc}">${ic("in")}Entrata</button></div>
     <div class="stack" style="gap:2px"><div class="amt"><span>€</span><input id="sAmt" inputmode="decimal" autocomplete="off" placeholder="0,00" value="${esc(st.amountStr)}" aria-label="${isInc ? "Fatturato" : "Importo"}"></div>
     ${isInc ? `<p class="xs muted" style="text-align:center">La borsa è già contata in automatico ogni mese.</p><div class="muted sm" id="sNet" style="text-align:center">${src?.kind === "extra" ? "Nessuna tassa · conta solo in questo mese" : src ? (net != null ? `Netto (${src.pct}%) <b class="mono" style="color:var(--foreground)">${eur(net)}</b>` : `Netto al ${src.pct}% del fatturato`) : "Scegli la fonte"}</div>` : ""}</div>
+    ${!st.id && !isInc ? repeatHtml() : ""}
     <div class="field"><span class="lab">${isInc ? "Fonte" : "Categoria"}</span><div class="togs" role="group" aria-label="${isInc ? "Fonte" : "Categoria"}">
       ${isInc ? [...(S.cfg.sources || []).filter(s => !(Number(s.fixed) > 0)), EXTRA].map(s => `<button class="tog" data-s="src" data-v="${esc(s.id)}" aria-pressed="${st.src === s.id}">${s.kind === "extra" ? `<span class="gd g-inc"></span>Extra senza tasse` : esc(s.name)}</button>`).join("")
-        : usageOrder().map(c => `<button class="tog" data-s="cat" data-v="${esc(c.id)}" aria-pressed="${st.cat === c.id}"><span class="gd g-${c.group}"></span>${esc(c.name)}</button>`).join("") + `<button class="tog" data-s="cat" data-v="fondo" aria-pressed="${st.cat === "fondo"}"><span class="gd g-fondo"></span>Spesa annuale</button>`}
+        : (() => { const all = usageOrder(), top = all.slice(0, 6), rest = all.slice(6), open = st.moreCats || (st.cat && !top.some(c => c.id === st.cat));
+          return `</div><div class="qgrid">${top.map(c => `<button class="qtile" data-s="cat" data-v="${esc(c.id)}" aria-pressed="${st.cat === c.id}"><span class="gd g-${c.group}"></span><span>${esc(c.name)}</span></button>`).join("")}</div>
+          ${open ? `<div class="togs" style="margin-top:8px">${rest.map(c => `<button class="tog" data-s="cat" data-v="${esc(c.id)}" aria-pressed="${st.cat === c.id}"><span class="gd g-${c.group}"></span>${esc(c.name)}</button>`).join("")}<button class="tog" data-s="cat" data-v="fondo" aria-pressed="${st.cat === "fondo"}"><span class="gd g-fondo"></span>Spesa annuale</button></div>` : `<button class="btn b-ghost b-sm" data-act="s-more" style="margin-top:6px;align-self:flex-start">Altre categorie (${rest.length + 1})</button>`}<div>`; })()}
     </div></div>
     ${canFrom(st) ? `<div class="field"><span class="lab">Pagata con</span><div class="togs" role="group" aria-label="Pagata con"><button class="tog" data-s="from" data-v="" aria-pressed="${!st.from}">Budget del mese</button>${pots().map(c => `<button class="tog" data-s="from" data-v="${esc(c.id)}" aria-pressed="${st.from === c.id}"><span class="gd g-ris"></span>${esc(c.name)} <span class="mono muted">${eur0(potAvailFor(st, c.id))}</span></button>`).join("")}</div><p class="xs muted" id="sFrom">${fromHint(st)}</p></div>` : ""}
     ${!isInc && st.cat === "fondo" ? `<div class="field"><label for="sAnn">Quale spesa annuale?</label><select id="sAnn" class="inp"><option value="">Scegli…</option>${(S.cfg.annual || []).map(a => `<option value="${esc(a.id)}" ${st.annId === a.id ? "selected" : ""}>${esc(a.name)}${a.sub ? " (abbonamento)" : ""}</option>`).join("")}</select></div>` : ""}
@@ -1216,6 +1227,19 @@ function fromHint(st) {
   if (!st.from || !catById(st.from)) return "Conta nel budget di questo mese.";
   const amt = parseAmt(st.amountStr), left = potAvailFor(st, st.from) - (isFinite(amt) ? amt : 0);
   return `Esce da ${esc(catById(st.from).name)} e non pesa sul budget del mese · ${left < 0 ? `<span style="color:var(--destructive)">supera il saldo di <span class="mono">${eur(-left)}</span></span>` : `restano <span class="mono">${eur(left)}</span>`}`;
+}
+/* ultime spese diverse inserite a mano, per ripeterle con un tocco */
+function lastExpenses() {
+  const seen = new Set(), out = [];
+  for (const t of [...S.expTx].sort((a, b) => (b.created || 0) - (a.created || 0))) {
+    if (t.recId || t.cat === "fondo" || !catById(t.cat) || catById(t.cat).group === "ris") continue;
+    const k = t.cat + "|" + (t.note || "").trim().toLowerCase(); if (seen.has(k)) continue; seen.add(k); out.push(t); if (out.length === 3) break;
+  }
+  return out;
+}
+function repeatHtml() {
+  const l = lastExpenses(); if (!l.length) return "";
+  return `<div class="field"><span class="lab">Ripeti una spesa recente</span><div class="togs reps">${l.map(t => `<button class="tog rep" data-act="s-repeat" data-id="${esc(t.id)}">${ic("repeat")}<span>${esc(catById(t.cat).name)}${t.note ? " · " + esc(t.note) : ""}</span><b class="mono">${eur(t.amount)}</b></button>`).join("")}</div></div>`;
 }
 function readSheetInputs() {
   const st = sheetState; if (!st) return;
@@ -1550,6 +1574,9 @@ document.addEventListener("click", async e => {
   if (act === "fund-save") return saveFundItem();
   if (act === "fund-del") return deleteFundItem();
   if (act === "s-save") return saveSheet();
+  if (act === "s-more") { readSheetInputs(); sheetState.moreCats = true; return drawSheet(); }
+  if (act === "s-repeat") { const t = S.expTx.find(x => x.id === a.dataset.id); if (!t) return; readSheetInputs();
+    Object.assign(sheetState, {cat:t.cat, amountStr:String(t.amount).replace(".", ","), note:t.note || "", tag:t.tag || "", from:t.from || ""}); drawSheet(); $("#sSave")?.focus(); return; }
   if (act === "s-del") { if (!sheetState.confirmDel) { readSheetInputs(); sheetState.confirmDel = true; return drawSheet(); } try { await S.db.doc("tx/" + sheetState.id).delete(); closeSheet(); toast("Movimento eliminato"); } catch (er) { fail(er); } return; }
   if (act === "edit") { const t = S.tx.find(x => x.id === a.dataset.id) || (S.tagTx || []).find(x => x.id === a.dataset.id) || S.expTx.find(x => x.id === a.dataset.id) || S.incTx.find(x => x.id === a.dataset.id); if (t) openSheet(t); return; }
   if (act === "cat-mode") { S.catMode = a.dataset.v; render(); return; }
