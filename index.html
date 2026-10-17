@@ -280,7 +280,7 @@ details.hist summary{padding-bottom:18px}
 @media (max-width:480px){.pie{grid-template-columns:1fr}.pie svg{max-width:200px;margin:0 auto}}
 .wide-only{display:none}
 @media (min-width:1100px){
-  .hdr .in,body[data-view="mese"] .wrap{max-width:1240px}
+  .hdr .in,body[data-view="mese"] .wrap,body[data-view="budget"] .wrap{max-width:1240px}
   .gcols{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:start}
   .wide-only{display:block}
   body[data-view="andamento"] .wrap{max-width:1240px}
@@ -989,11 +989,13 @@ function viewBudget() {
     <div class="row"><label for="restSel" class="sm muted" style="white-space:nowrap">Il resto va in</label><select id="restSel" class="inp grow">${GROUPS.map(g => `<optgroup label="${g.name}">${cats().filter(c => c.group === g.id && !isAuto(c)).map(c => `<option value="${esc(c.id)}" ${c.id === restCat() ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</optgroup>`).join("")}</select></div>
     <div class="row"><label for="restMin" class="sm muted" style="white-space:nowrap">Minimo da mettere da parte</label><input id="restMin" class="inp num grow" style="width:auto" inputmode="decimal" value="${esc(String(restMin()).replace(".", ","))}"></div>
     <p class="xs muted">Ogni euro delle entrate mensili è assegnato: quello che non metti nelle altre voci finisce qui, anche quando arriva una nuova fattura. Borsa <span class="mono">${eur0(incomeFor(S.month).fixed)}</span> + fatture degli ultimi 12 mesi <span class="mono">${eur0(incomeFor(S.month).pool)}</span> ÷ 12. Ogni nuova fattura alza le entrate mensili di 1/12 del suo netto, per 12 mesi.</p></div></div>`;
+  h += `<div class="gcols">`;
   for (const g of GROUPS) {
     const cs = budCatsFor(S.budgetDraft).filter(c => c.group === g.id);
     const sub = cs.reduce((a, c) => a + budOf(c, S.budgetDraft), 0);
     h += `<div class="card"><div class="card-h"><div class="card-t row"><span class="gd g-${g.id}"></span>${g.name}</div><span class="badge bd-secondary mono" data-gsub="${g.id}">${eur0(sub)}</span></div><div class="card-c" style="padding-top:8px"><table><tbody>` + cs.map(c => isRest(c) ? `<tr><td>${esc(c.name)} <span class="badge bd-success">riceve il resto</span><div class="xs muted">Entrate mensili meno tutte le altre voci</div></td><td class="r mono" id="restVal" style="font-weight:600;padding-right:12px">${eur(budOf(c, S.budgetDraft))}</td></tr>` : isAuto(c) ? `<tr><td>${esc(c.name)} <span class="badge bd-outline">${subs().length + annSubs().length} abbonamenti</span><div class="xs muted">Somma degli abbonamenti, annuali divisi per 12</div></td><td class="r"><button class="btn b-outline b-sm mono" data-act="open-subs">${eur(subsTotal())}</button></td></tr>` : `<tr><td><label for="b_${esc(c.id)}">${esc(c.name)}</label>${c.fixed ? ` <span class="badge bd-outline">fissa</span>` : ""}</td><td class="r"><input class="inp num" id="b_${esc(c.id)}" data-bud="${esc(c.id)}" data-g="${g.id}" inputmode="decimal" value="${esc(String(S.budgetDraft[c.id] ?? 0).replace(".", ","))}"></td></tr>`).join("") + `</tbody></table></div></div>`;
   }
+  h += `</div>`;
   h += `<div class="stickybar"><button class="btn b-default" data-act="save-budget" style="box-shadow:var(--shadow-lg)">${ic("check")}Salva budget di ${esc(mLong(S.month))}</button></div>`;
   return h;
 }
