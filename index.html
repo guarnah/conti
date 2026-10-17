@@ -196,10 +196,12 @@ input[type=checkbox]{width:16px;height:16px;accent-color:var(--primary)}
 
 /* bottom nav */
 .bnav{position:fixed;left:0;right:0;bottom:0;z-index:30;background:color-mix(in oklab,var(--card) 92%,transparent);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border-top:1px solid var(--border);padding-bottom:env(safe-area-inset-bottom,0px)}
-.bnav .in{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));max-width:760px;margin:0 auto}
-.bnav button{border:0;background:none;padding:9px 2px 10px;font-size:11px;font-weight:500;color:var(--muted-foreground);display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer}
+.bnav .in{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));max-width:760px;margin:0 auto}
+.bnav button{border:0;background:none;padding:9px 0 10px;font-size:10px;letter-spacing:-.01em;white-space:nowrap;font-weight:500;color:var(--muted-foreground);display:flex;flex-direction:column;align-items:center;gap:4px;cursor:pointer}
 .bnav button svg.i{width:20px;height:20px}
 .bnav button[aria-current="page"]{color:var(--foreground)}
+.bnav .l-xs{display:none}
+@media (max-width:379px){.bnav .l-n{display:none}.bnav .l-xs{display:inline}}
 .fab{position:fixed;right:16px;bottom:calc(72px + env(safe-area-inset-bottom,0px));z-index:31;height:48px;padding:0 18px 0 14px;border-radius:999px;box-shadow:var(--shadow-lg);font-size:15px}
 .fab svg.i{width:20px;height:20px}
 body[data-view="budget"] .fab,body[data-view="altro"] .fab{display:none}
@@ -268,6 +270,9 @@ h1.pt{font-size:22px;font-weight:600;letter-spacing:-.02em}
 .tip{position:absolute;left:0;top:calc(100% + 8px);z-index:20;width:min(340px,86vw);padding:10px 12px;border-radius:var(--radius);background:var(--popover);color:var(--foreground);border:1px solid var(--border);box-shadow:var(--shadow-lg);font-size:12px;line-height:1.5;opacity:0;visibility:hidden;transform:translateY(-4px);transition:opacity .15s,transform .15s,visibility .15s;pointer-events:none}
 .has-tip:hover .tip,.has-tip:focus .tip,.has-tip:focus-within .tip{opacity:1;visibility:visible;transform:none}
 @media (max-width:480px){.perday{flex-direction:row;align-items:baseline;gap:6px;border:0;padding:0;margin-top:-6px}.perday b{font-size:16px}}
+details.hist summary::-webkit-details-marker{display:none}
+details.hist[open] summary .btn{visibility:hidden}
+details.hist summary{padding-bottom:18px}
 .pie{display:grid;grid-template-columns:minmax(0,180px) minmax(0,1fr);gap:18px;align-items:center}
 .pie svg{width:100%;height:auto;display:block}
 .pie-l{display:flex;flex-direction:column;gap:8px}
@@ -310,7 +315,7 @@ button,.btn,.trow,.crow,.tog,.tab,label,a{touch-action:manipulation}
 .btn:active,.tog:active{transform:scale(.96)}
 .trow:active,.crow:active{background:var(--muted)!important;transform:scale(.985)}
 .bnav button{position:relative;-webkit-user-select:none;user-select:none}
-.bnav .pill{display:grid;place-items:center;width:54px;height:30px;border-radius:999px;transition:background-color .25s,transform .2s cubic-bezier(.2,.8,.2,1)}
+.bnav .pill{display:grid;place-items:center;width:min(48px,100%);height:30px;border-radius:999px;transition:background-color .25s,transform .2s cubic-bezier(.2,.8,.2,1)}
 .bnav button[aria-current="page"] .pill{background:color-mix(in oklab,var(--foreground) 9%,transparent)}
 .bnav button:active .pill{transform:scale(.88)}
 .fab{transition:transform .32s cubic-bezier(.32,.72,0,1),opacity .2s,background-color .18s}
@@ -395,7 +400,7 @@ const ICONS = {
   piggy:'<path d="M11 17h3v2a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1v-3a3.16 3.16 0 0 0 2-2h1a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1h-1a5 5 0 0 0-2-4V3a4 4 0 0 0-3.2 1.6l-.3.4H11a6 6 0 0 0-6 6v1a5 5 0 0 0 2 4v3a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1z"/><path d="M16 10h.01M2 8v1a2 2 0 0 0 2 2h1"/>'
 };
 const ic = (n, cls = "") => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[n] || ""}</svg>`;
-const TABS = [{id:"mese", n:"Mese", i:"dash"}, {id:"movimenti", n:"Movimenti", i:"list"}, {id:"andamento", n:"Andamento", i:"chart"}, {id:"budget", n:"Budget", i:"wallet"}, {id:"salvadanai", n:"Salvadanai", i:"piggy"}, {id:"altro", n:"Impostazioni", s:"Altro", i:"sliders"}];
+const TABS = [{id:"mese", n:"Mese", i:"dash"}, {id:"movimenti", n:"Movimenti", i:"list"}, {id:"entrate", n:"Entrate", i:"in"}, {id:"andamento", n:"Andamento", xs:"Grafici", i:"chart"}, {id:"budget", n:"Budget", i:"wallet"}, {id:"salvadanai", n:"Salvadanai", i:"piggy"}, {id:"altro", n:"Impostazioni", s:"Altro", i:"sliders"}];
 
 /* ---------- utilità ---------- */
 const $ = (s, r = document) => r.querySelector(s);
@@ -603,7 +608,7 @@ function subscribeMonth() {
 /* ---------- render ---------- */
 function drawNav() {
   if (!$("#bnav").children.length) {
-    $("#bnav").innerHTML = TABS.map(t => `<button data-tab="${t.id}"><span class="pill">${ic(t.i)}</span>${t.s || t.n}</button>`).join("");
+    $("#bnav").innerHTML = TABS.map(t => `<button data-tab="${t.id}"><span class="pill">${ic(t.i)}</span>${t.xs ? `<span class="l-n">${t.s || t.n}</span><span class="l-xs">${t.xs}</span>` : t.s || t.n}</button>`).join("");
     $("#dtabs").innerHTML = TABS.map(t => `<button class="tab" role="tab" data-tab="${t.id}">${t.n}</button>`).join("");
   }
   document.querySelectorAll("#bnav [data-tab]").forEach(b => b.setAttribute("aria-current", S.view === b.dataset.tab ? "page" : "false"));
@@ -624,6 +629,7 @@ function render() {
   else if (S.view === "budget") html = viewBudget();
   else if (S.view === "salvadanai") html = viewSalvadanai();
   else if (S.view === "altro") { if (!v.querySelector("#settings") || !S.settingsDirty) html = viewAltro(); }
+  else if (S.view === "entrate") { if (!v.querySelector("#entrate") || !S.settingsDirty) html = viewEntrate(); }
   if (html != null) {
     const full = `<div class="stack" style="margin-top:20px">${html}</div>`;
     const heroOld = v.querySelector(".hero .big[data-v]"); const prev = heroOld ? {v:Number(heroOld.dataset.v), k:heroOld.dataset.k} : null;
@@ -1015,11 +1021,7 @@ function viewAltro() {
     `<div class="grid2" style="margin-top:16px"><div class="field"><label for="fundInitial">Saldo iniziale del fondo</label><input class="inp" id="fundInitial" inputmode="decimal" value="${esc(String(c.fundInitial || 0).replace(".", ","))}"></div><div class="field"><label for="startMonth">Accantona a partire da</label><input class="inp" id="startMonth" type="month" value="${esc(c.startMonth || curMonth())}"></div></div>
     <p class="xs muted" style="margin-top:10px">"Tua %" serve per le spese che dividi, ad esempio bollette al 50%.</p>`)}
   ${tblCard("recurring", "Ricorrenti mensili", "Proposte ogni mese, le registri con un tap. Gli abbonamenti si gestiscono a parte.", [["Voce"], ["Importo", "r"], ["Categoria"], [""]], (c.recurring || []).filter(x => x.cat !== SUBCAT), ROW.recurring, "Aggiungi ricorrente", `<div style="margin-top:10px"><button class="btn b-outline b-sm" data-act="open-subs">${ic("repeat")}Gestisci abbonamenti (${subs().length + annSubs().length})</button></div>`)}
-  ${tblCard("sources", "Fonti di entrata", "Le fatture si spalmano su 12 mesi; gli importi fissi contano ogni mese", [["Fonte"], ["% netto", "r"], ["Fisso al mese", "r"], ["Nuovo importo", "r"], ["Dal mese"], [""]], c.sources || [], ROW.sources, "Aggiungi fonte", `<p class="xs muted" style="margin-top:10px">Una fonte con importo fisso (la borsa) entra in automatico ogni mese e non va registrata. Le altre le registri quando fatturi. Se l'importo fisso cambia, scrivi il nuovo importo e il mese da cui vale: i mesi prima restano con quello vecchio.</p>`)}
-  <div class="card"><div class="card-h"><div><div class="card-t">Storico fatture</div><div class="card-d">Fatturato nei mesi prima di usare l'app, per la media dei 12 mesi e il totale dell'anno</div></div></div>
-  <div class="card-c tw" style="padding-top:8px"><table><thead><tr><th>Mese</th><th class="r">Lordo €</th><th class="r">Netto €</th><th></th></tr></thead><tbody>${[...new Set([...Object.keys(c.incomeHistory || {}), ...Object.keys(c.incomeHistoryGross || {})])].sort().map(k => `<tr data-row="hist" data-id="${esc(k)}">${ROW.hist({m:k, v:c.incomeHistory?.[k], g:c.incomeHistoryGross?.[k]})}</tr>`).join("")}</tbody></table>
-  <div style="margin-top:10px"><button class="btn b-outline b-sm" data-act="add-row" data-kind="hist">${ic("plus")}Aggiungi mese</button></div>
-  <p class="xs muted" style="margin-top:10px">Vale solo per i mesi prima di "Accantona a partire da". Dopo, contano le entrate registrate.</p></div></div>
+  <div class="card"><div class="card-c between" style="flex-wrap:wrap;gap:10px"><div><div class="card-t">Fonti di entrata e storico fatture</div><div class="card-d">Ora sono nella sezione Entrate</div></div><button class="btn b-outline b-sm" data-tab="entrate">${ic("in")}Vai a Entrate</button></div></div>
   ${tblCard("categories", "Categorie", '"Fissa": la proiezione la considera pagata per intero', [["Nome"], ["Area"], ["Fissa"], ["Budget base", "r"], ["Attiva"]], c.categories || [], ROW.categories, "Aggiungi categoria", `<p class="xs muted" style="margin-top:10px">Le categorie disattivate restano nei movimenti passati.</p>`)}
   <div class="card"><div class="card-h"><div><div class="card-t">Salvadanai</div><div class="card-d">Categorie di risparmio da cui puoi pagare una spesa senza pesare sul mese</div></div></div>
   <div class="card-c tw" style="padding-top:8px">${(c.categories || []).filter(k => k.group === "ris" && !k.hidden).length ? `<table><thead><tr><th>Categoria</th><th class="r">Saldo iniziale €</th><th>Si può usare</th></tr></thead><tbody>${(c.categories || []).filter(k => k.group === "ris" && !k.hidden).map(k => `<tr data-row="pot" data-id="${esc(k.id)}"><td>${esc(k.name)}</td><td class="r"><input class="inp num" style="width:100px" data-f="init" inputmode="decimal" value="${esc(String(k.potInitial || 0).replace(".", ","))}" aria-label="Saldo iniziale di ${esc(k.name)}"></td><td><input type="checkbox" data-f="pot" ${isPot(k) ? "checked" : ""} aria-label="Usabile per pagare spese"></td></tr>`).join("")}</tbody></table>` : `<p class="muted sm">Nessuna categoria di risparmio attiva.</p>`}
@@ -1035,19 +1037,46 @@ function viewAltro() {
   </div>`;
 }
 
+/* ---------- entrate ---------- */
+const sourcesCard = c => tblCard("sources", "Fonti di entrata", "Le fatture si spalmano su 12 mesi; gli importi fissi contano ogni mese", [["Fonte"], ["% netto", "r"], ["Fisso al mese", "r"], ["Nuovo importo", "r"], ["Dal mese"], [""]], c.sources || [], ROW.sources, "Aggiungi fonte", `<p class="xs muted" style="margin-top:10px">Una fonte con importo fisso (la borsa) entra in automatico ogni mese e non va registrata. Le altre le registri quando fatturi. Se l'importo fisso cambia, scrivi il nuovo importo e il mese da cui vale: i mesi prima restano con quello vecchio.</p>`);
+function histCard(c) { const nm = new Set([...Object.keys(c.incomeHistory || {}), ...Object.keys(c.incomeHistoryGross || {})]).size; return `<details class="card hist"><summary class="card-h" style="cursor:pointer;list-style:none"><div><div class="card-t">Storico fatture</div><div class="card-d">${nm} mesi prima di usare l'app · per la media dei 12 mesi e il totale dell'anno</div></div><span class="btn b-ghost b-sm">Mostra</span></summary>
+  <div class="card-c tw" style="padding-top:8px"><table><thead><tr><th>Mese</th><th class="r">Lordo €</th><th class="r">Netto €</th><th></th></tr></thead><tbody>${[...new Set([...Object.keys(c.incomeHistory || {}), ...Object.keys(c.incomeHistoryGross || {})])].sort().map(k => `<tr data-row="hist" data-id="${esc(k)}">${ROW.hist({m:k, v:c.incomeHistory?.[k], g:c.incomeHistoryGross?.[k]})}</tr>`).join("")}</tbody></table>
+  <div style="margin-top:10px"><button class="btn b-outline b-sm" data-act="add-row" data-kind="hist">${ic("plus")}Aggiungi mese</button></div>
+  <p class="xs muted" style="margin-top:10px">Vale solo per i mesi prima di "Accantona a partire da". Dopo, contano le entrate registrate.</p></div></details>`; }
+function viewEntrate() {
+  const c = S.cfg, inc = incomeFor(S.month), list = S.tx.filter(t => t.kind === "inc");
+  const tot = list.reduce((a, t) => a + (Number(t.amount) || 0), 0);
+  return `<div id="entrate" class="stack">
+  <div class="between" style="align-items:flex-end;gap:12px"><div><h1 class="pt">Entrate</h1><p class="muted sm">Borsa, fatture e altre entrate</p></div><button class="btn b-default b-sm" data-act="inc-new" style="flex:none">${ic("plus")}Nuova entrata</button></div>
+  <div class="card hero"><div class="card-c stack" style="gap:14px"><div><div class="lbl">Entrate mensili di ${esc(mLong(S.month))}</div><div class="big mono">${eur(inc.monthly)}</div></div>
+    <div class="stats"><div class="stat" style="padding:0"><div class="l">Fissi (borsa)</div><div class="v mono">${eur0(inc.fixed)}</div></div><div class="stat" style="padding:0"><div class="l">Fatture ÷ 12</div><div class="v mono">${eur0(inc.pool / 12)}</div></div><div class="stat" style="padding:0"><div class="l">Extra del mese</div><div class="v mono">${eur0(inc.extra)}</div></div></div>
+    <p class="xs muted">Le fatture contano per 1/12 del netto per 12 mesi: oggi il totale degli ultimi 12 mesi è <span class="mono">${eur0(inc.pool)}</span>. Le entrate extra contano solo nel mese in cui arrivano. La borsa entra da sola ogni mese.</p></div></div>
+  <div class="card"><div class="card-h"><div><div class="card-t">Registrate a ${esc(mLong(S.month))}</div><div class="card-d">${list.length ? `${list.length} ${list.length === 1 ? "entrata" : "entrate"} · netto <span class="mono">${eur(tot)}</span>` : "Nessuna entrata registrata"}</div></div></div>
+    ${list.length ? `<div class="card-c flush">${list.map(txRow).join("")}</div>` : ""}</div>
+  ${sourcesCard(c)}
+  ${histCard(c)}
+  <div class="stickybar"><button class="btn b-default" data-act="save-income" style="box-shadow:var(--shadow-lg)">${ic("check")}Salva fonti e storico</button></div>
+  </div>`;
+}
+/* legge fonti e storico dalla pagina (Entrate) */
+function readIncome(cfg) {
+  const rows = kind => [...document.querySelectorAll(`tr[data-row="${kind}"]`)].map(tr => { const o = {id:tr.dataset.id}; tr.querySelectorAll("[data-f]").forEach(i => { o[i.dataset.f] = i.type === "checkbox" ? i.checked : i.value; }); return o; });
+  const prev = id => (S.cfg.sources || []).find(x => x.id === id) || {};
+  cfg.sources = rows("sources").filter(a => a.name.trim()).map(a => {
+    const old = prev(a.id), ch = {...(old.fixedChanges || {})}; delete ch[lastChange(old)];
+    const na = parseAmt(a.newAmt); if (/^\d{4}-\d{2}$/.test(a.from) && isFinite(na) && na > 0) ch[a.from] = r2(na);
+    return {id:a.id, name:a.name.trim(), pct:Math.max(0, Math.min(100, Number(a.pct) || 0)), fixed:a.fixed ? r2(parseAmt(a.fixed) || 0) : null, ...(Object.keys(ch).length ? {fixedChanges:ch} : {})};
+  });
+  cfg.incomeHistory = {}; cfg.incomeHistoryGross = {}; rows("hist").forEach(h => { if (/^\d{4}-\d{2}$/.test(h.m)) { cfg.incomeHistory[h.m] = r2(parseAmt(h.v) || 0); cfg.incomeHistoryGross[h.m] = r2(parseAmt(h.g) || 0); } });
+  return cfg;
+}
 function readSettings() {
   const cfg = structuredClone(S.cfg);
   const rows = kind => [...document.querySelectorAll(`tr[data-row="${kind}"]`)].map(tr => { const o = {id:tr.dataset.id}; tr.querySelectorAll("[data-f]").forEach(i => { o[i.dataset.f] = i.type === "checkbox" ? i.checked : i.value; }); return o; });
   const prev = (kind, id) => (S.cfg[kind] || []).find(x => x.id === id) || {};
   cfg.annual = rows("annual").filter(a => a.name.trim()).map(a => ({...prev("annual", a.id), id:a.id, name:a.name.trim(), amount:r2(parseAmt(a.amount) || 0), share:Math.max(0, Math.min(100, Number(a.share) || 0)), due:a.due ? Number(a.due) : null}));
   cfg.recurring = [...rows("recurring").filter(a => a.name.trim()).map(a => ({id:a.id, name:a.name.trim(), amount:r2(parseAmt(a.amount) || 0), cat:a.cat})), ...(S.cfg.recurring || []).filter(x => x.cat === SUBCAT)];
-  cfg.sources = rows("sources").filter(a => a.name.trim()).map(a => {
-    const old = prev("sources", a.id), ch = {...(old.fixedChanges || {})}; delete ch[lastChange(old)];
-    const na = parseAmt(a.newAmt); if (/^\d{4}-\d{2}$/.test(a.from) && isFinite(na) && na > 0) ch[a.from] = r2(na);
-    return {id:a.id, name:a.name.trim(), pct:Math.max(0, Math.min(100, Number(a.pct) || 0)), fixed:a.fixed ? r2(parseAmt(a.fixed) || 0) : null, ...(Object.keys(ch).length ? {fixedChanges:ch} : {})};
-  });
   cfg.categories = rows("categories").filter(a => a.name.trim()).map(a => ({...prev("categories", a.id), id:a.id, name:a.name.trim(), group:a.group, fixed:!!a.fixed, defaultBudget:r2(parseAmt(a.defaultBudget) || 0), hidden:!a.active}));
-  cfg.incomeHistory = {}; cfg.incomeHistoryGross = {}; rows("hist").forEach(h => { if (/^\d{4}-\d{2}$/.test(h.m)) { cfg.incomeHistory[h.m] = r2(parseAmt(h.v) || 0); cfg.incomeHistoryGross[h.m] = r2(parseAmt(h.g) || 0); } });
   rows("pot").forEach(p => { const k = cfg.categories.find(x => x.id === p.id); if (k) { k.potInitial = r2(parseAmt(p.init) || 0); k.pot = !!p.pot; } });
   cfg.fundInitial = r2(parseAmt($("#fundInitial").value) || 0);
   cfg.startMonth = $("#startMonth").value || cfg.startMonth;
@@ -1081,11 +1110,11 @@ function usageOrder() {
   const cnt = {}; S.tx.forEach(t => { if (t.kind !== "inc") cnt[t.cat] = (cnt[t.cat] || 0) + 1; });
   return cats().filter(c => !c.fixed || cnt[c.id]).map((c, i) => ({c, k:(cnt[c.id] || 0) * 100 - i})).sort((a, b) => b.k - a.k).map(x => x.c).concat(cats().filter(c => c.fixed && !cnt[c.id]));
 }
-function openSheet(tx) {
+function openSheet(tx, kind) {
   const editing = !!tx;
   const defDate = S.month === curMonth() ? todayISO() : (S.month < curMonth() ? `${S.month}-${pad(daysIn(S.month))}` : `${S.month}-01`);
   sheetState = editing ? {...tx, amountStr:String(tx.kind === "inc" ? (tx.gross || tx.amount) : tx.amount).replace(".", ","), confirmDel:false}
-    : {kind:"exp", cat:"", src:"", annId:"", from:"", date:defDate, note:"", tag:"", amountStr:"", confirmDel:false};
+    : {kind:kind || "exp", cat:"", src:"", annId:"", from:"", date:defDate, note:"", tag:"", amountStr:"", confirmDel:false};
   const bg = document.createElement("div"); bg.className = "ovl"; bg.id = "sheetBg";
   bg.innerHTML = `<div class="drawer" role="dialog" aria-modal="true" aria-labelledby="sTitle" id="sheet"></div>`;
   document.body.appendChild(bg); document.body.style.overflow = "hidden";
@@ -1488,6 +1517,12 @@ document.addEventListener("click", async e => {
     tb.appendChild(tr); tr.querySelector("input")?.focus(); return;
   }
   if (act === "del-row") { S.settingsDirty = true; a.closest("tr").remove(); return; }
+  if (act === "inc-new") return openSheet(null, "inc");
+  if (act === "save-income") {
+    const cfg = readIncome(structuredClone(S.cfg)); a.disabled = true;
+    try { await S.db.doc("config/main").set(cfg); S.cfg = cfg; S.settingsDirty = false; S.trendCache = null; toast("Entrate salvate"); render(); } catch (er) { fail(er); a.disabled = false; }
+    return;
+  }
   if (act === "save-cfg") {
     const cfg = readSettings(); a.disabled = true;
     try { await S.db.doc("config/main").set(cfg); S.settingsDirty = false; toast("Impostazioni salvate"); render(); } catch (er) { fail(er); a.disabled = false; }
@@ -1508,7 +1543,7 @@ document.addEventListener("input", e => {
     const rv = $("#restVal"); if (rv) rv.textContent = eur(Math.max(0, restFor(S.budgetDraft)));
     GROUPS.forEach(g => { const gs = document.querySelector(`[data-gsub="${g.id}"]`); if (gs) gs.textContent = eur0(budCatsFor(S.budgetDraft).filter(c => c.group === g.id).reduce((a, c) => a + budOf(c, S.budgetDraft), 0)); });
   }
-  if (t.closest?.("#settings")) S.settingsDirty = true;
+  if (t.closest?.("#settings") || t.closest?.("#entrate .tw")) S.settingsDirty = true;
   if ((t.id === "fAmt" || t.id === "fShare") && $("#fMonthly")) { const v = parseAmt($("#fAmt").value || "0"), sh = $("#fShare").value === "" ? 100 : Number($("#fShare").value); $("#fMonthly").textContent = eur((isFinite(v) ? v : 0) * ((isFinite(sh) ? sh : 100) / 100) / 12); }
   if ((t.id === "abAmt" || t.id === "abDue" || t.id === "abAuto") && subState?.item && $("#abHint")) { readSubInputs(); $("#abHint").innerHTML = subHint(subState.item); }
   if (t.id === "abAmt" && subState?.mode === "renew" && $("#abPayL")) { const v = parseAmt(t.value); $("#abPayL b").textContent = isFinite(v) && v > 0 ? eur(v) : "—"; }
