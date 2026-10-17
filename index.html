@@ -262,6 +262,7 @@ h1.pt{font-size:22px;font-weight:600;letter-spacing:-.02em}
   .hdr .in,body[data-view="mese"] .wrap{max-width:1240px}
   .gcols{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:start}
   .wide-only{display:block}
+  .narrow-only{display:none}
 }
 @media (max-width:420px){.hero .big{font-size:34px}.stat{padding:10px 11px}.stat .v{font-size:15px}.card-h{padding:16px 16px 0}.card-c{padding:14px 16px 16px}}
 @media (prefers-reduced-motion:no-preference){.drawer{animation:dIn .2s cubic-bezier(.32,.72,0,1)}@keyframes dIn{from{transform:translateY(24px);opacity:.5}}.toast{animation:tIn .2s ease-out}@keyframes tIn{from{transform:translate(-50%,8px);opacity:0}}}
@@ -658,12 +659,21 @@ function viewMese() {
         const grp = rs.length ? `<div class="trow" style="cursor:default;grid-template-columns:36px minmax(0,1fr) auto auto"><div class="ava g-ext">${ic("repeat")}</div><button class="grow" data-act="open-subs" style="all:unset;cursor:pointer;min-width:0"><div class="t1">Abbonamenti</div><div class="t2">${esc(rs.map(x => x.name).join(", "))}</div></button><div class="am mono">${eur(rs.reduce((a, x) => a + (Number(x.amount) || 0), 0))}</div><button class="btn b-outline b-sm" data-act="rec-subs">Registra</button></div>` : "";
         return other.map(x => `<div class="trow" style="cursor:default;grid-template-columns:36px minmax(0,1fr) auto auto"><div class="ava g-${catById(x.cat)?.group || "ess"}">${ic("repeat")}</div><div class="grow"><div class="t1">${esc(x.name)}</div><div class="t2">${esc(catById(x.cat)?.name || "")}</div></div><div class="am mono">${eur(x.amount)}</div><button class="btn b-outline b-sm" data-act="rec-one" data-id="${esc(x.id)}">Registra</button></div>`).join("") + grp; })() + `</div></div>`;
   }
+  let fundHtml = "";
+  if ((S.cfg.annual || []).length) {
+    const f = fundStatus();
+    fundHtml = `<div class="card"><div class="card-h"><div><div class="card-t row"><span class="gd g-fondo"></span>Fondo spese annuali</div><div class="card-d">Accantoni <span class="mono">${eur(monthlyAccrualAll())}</span> al mese (abbonamenti annuali inclusi), già conteggiati nelle uscite</div></div><span class="muted">${ic("piggy")}</span></div>
+      <div class="card-c stack" style="gap:12px">
+      <div class="stats"><div class="stat" style="padding:0"><div class="l">Accantonato</div><div class="v mono">${eur0(f.accrued)}</div></div><div class="stat" style="padding:0"><div class="l">Pagato</div><div class="v mono">${eur0(f.paid)}</div></div><div class="stat" style="padding:0"><div class="l">Disponibile</div><div class="v mono" style="color:${f.avail < 0 ? "var(--destructive)" : "var(--success)"}">${eur0(f.avail)}</div></div></div>
+      ${f.upcoming.length ? `<div class="stack" style="gap:6px">${f.upcoming.map(a => `<div class="between sm"><span class="row">${ic("cal")}${esc(a.name)}</span><span class="row"><span class="badge bd-outline">${esc(a.dueD ? fmtDate(a.dueD) : mShort(a.dueM))}</span><span class="mono">${eur0(a.mine)}</span></span></div>`).join("")}</div>` : ""}
+      <div class="between" style="flex-wrap:wrap"><p class="xs muted grow">Quando paghi una di queste spese, registrala come "Spesa annuale": esce dal fondo e non pesa sul mese.</p><button class="btn b-outline b-sm" data-act="open-fund">Gestisci voci</button></div></div></div>`;
+  }
   h += `<div class="gcols">`;
   for (const g of GROUPS) {
     const rows = r.rows.filter(x => x.c.group === g.id && (x.b > 0 || x.s > 0));
     const accRow = g.id === "ess" && (S.cfg.annual || []).length;
     if (!rows.length && !accRow && g.id !== "ris") continue;
-    if (g.id === "ris") h += `<div class="gcol">`;
+    if (g.id === "ris" || g.id === "ess") h += `<div class="gcol">`;
     if (!rows.length && !accRow) { h += potsMini() + `</div>`; continue; }
     const gb = rows.reduce((a, x) => a + x.b, 0) + (accRow ? r.acc : 0), gs = rows.reduce((a, x) => a + x.s, 0) + (accRow ? r.acc : 0);
     h += `<div class="card"><div class="card-h"><div><div class="card-t row"><span class="gd g-${g.id}"></span>${g.name}</div><div class="card-d">${g.d}</div></div><span class="badge bd-secondary mono">${eur0(gs)} / ${eur0(gb)}</span></div><div class="card-c flush">`;
@@ -680,16 +690,10 @@ function viewMese() {
     }).join(`<div class="sep"></div>`);
     h += `</div></div>`;
     if (g.id === "ris") h += potsMini() + `</div>`;
+    if (g.id === "ess") h += (fundHtml ? `<div class="wide-only">${fundHtml}</div>` : "") + `</div>`;
   }
   h += `</div>`;
-  if ((S.cfg.annual || []).length) {
-    const f = fundStatus();
-    h += `<div class="card"><div class="card-h"><div><div class="card-t row"><span class="gd g-fondo"></span>Fondo spese annuali</div><div class="card-d">Accantoni <span class="mono">${eur(monthlyAccrualAll())}</span> al mese (abbonamenti annuali inclusi), già conteggiati nelle uscite</div></div><span class="muted">${ic("piggy")}</span></div>
-      <div class="card-c stack" style="gap:12px">
-      <div class="stats"><div class="stat" style="padding:0"><div class="l">Accantonato</div><div class="v mono">${eur0(f.accrued)}</div></div><div class="stat" style="padding:0"><div class="l">Pagato</div><div class="v mono">${eur0(f.paid)}</div></div><div class="stat" style="padding:0"><div class="l">Disponibile</div><div class="v mono" style="color:${f.avail < 0 ? "var(--destructive)" : "var(--success)"}">${eur0(f.avail)}</div></div></div>
-      ${f.upcoming.length ? `<div class="stack" style="gap:6px">${f.upcoming.map(a => `<div class="between sm"><span class="row">${ic("cal")}${esc(a.name)}</span><span class="row"><span class="badge bd-outline">${esc(a.dueD ? fmtDate(a.dueD) : mShort(a.dueM))}</span><span class="mono">${eur0(a.mine)}</span></span></div>`).join("")}</div>` : ""}
-      <div class="between" style="flex-wrap:wrap"><p class="xs muted grow">Quando paghi una di queste spese, registrala come "Spesa annuale": esce dal fondo e non pesa sul mese.</p><button class="btn b-outline b-sm" data-act="open-fund">Gestisci voci</button></div></div></div>`;
-  }
+  if (fundHtml) h += `<div class="narrow-only">${fundHtml}</div>`;
   return h;
 }
 
