@@ -484,7 +484,7 @@ const GROUPS = [{id:"ess", name:"Essenziali", d:"Spese di base"}, {id:"ext", nam
 
 /* ---------- stato ---------- */
 const S = { db:null, cfg:null, cfgLoaded:false, month:curMonth(), tx:[], txLoaded:false, budget:null, budgetLoaded:false, prevBudget:null,
-  fundTx:[], incTx:[], expTx:[], view:"mese", unsubTx:null, unsubBud:null, trendCache:null, tagFilter:"", catFilter:"", tagAll:null, budgetDraft:null, settingsDirty:false, trendCat:"" };
+  fundTx:[], incTx:[], expTx:[], taxTx:[], view:"mese", unsubTx:null, unsubBud:null, trendCache:null, tagFilter:"", catFilter:"", tagAll:null, budgetDraft:null, settingsDirty:false, trendCat:"" };
 
 const toast = msg => { document.querySelectorAll(".toast").forEach(t => t.remove()); const t = document.createElement("div"); t.className = "toast"; t.setAttribute("role", "status"); t.innerHTML = ic("check") + esc(msg); document.body.appendChild(t); setTimeout(() => t.remove(), 2400); };
 const setStatus = (s, k = "ok") => { const el = $("#status"); el.textContent = s; el.dataset.s = k; };
@@ -612,7 +612,7 @@ function computeMonth(txs, budCats, m) {
   const frac = daysIn(m) ? day / daysIn(m) : 0;
   const spent = {}; const inc = incomeFor(m); const income = inc.monthly;
   for (const t of txs) {
-    if (t.kind === "inc") continue;
+    if (t.kind === "inc" || t.kind === "tax") continue; // le tasse si pagano dalla quota accantonata, non dal budget
     if (t.cat === "fondo" || t.from) continue; // spese annuali e spese pagate da un salvadanaio non pesano sul mese
     spent[t.cat] = (spent[t.cat] || 0) + (Number(t.amount) || 0);
   }
@@ -645,6 +645,7 @@ async function boot() {
   }, e => fail(e));
   db.collection("tx").where("kind", "==", "inc").onSnapshot(snap => { S.incTx = snap.docs.map(d => ({id:d.id, ...d.data()})); S.trendCache = null; render(); }, e => fail(e));
   db.collection("tx").where("cat", "==", "fondo").onSnapshot(snap => { S.fundTx = snap.docs.map(d => ({id:d.id, ...d.data()})); render(); }, e => fail(e));
+  db.collection("tx").where("kind", "==", "tax").onSnapshot(snap => { S.taxTx = snap.docs.map(d => ({id:d.id, ...d.data()})); render(); }, e => fail(e));
   db.collection("tx").where("kind", "==", "exp").onSnapshot(snap => { S.expTx = snap.docs.map(d => ({id:d.id, ...d.data()})); render(); }, e => fail(e));
   subscribeMonth();
 }
@@ -759,6 +760,7 @@ function viewMese() {
   const pct = r.budTot ? Math.round(r.spentTot / r.budTot * 100) : 0;
   let h = "";
   if (bud.draft && S.budgetLoaded) h += `<div class="alert"><div class="row" style="align-items:flex-start">${ic("info")}<div><div class="t">Budget di ${esc(mLong(S.month))} da confermare</div><div class="muted sm">Per ora uso ${bud.from ? "quello di " + esc(mLong(bud.from)) : "i valori predefiniti"}.</div></div></div><button class="btn b-outline b-sm" data-act="goto-budget">Rivedi budget</button></div>`;
+  if (S.month === curMonth()) for (const d of taxStatus().open.filter(d => d.date <= addDaysISO(todayISO(), 10))) h += `<div class="alert"><div class="row" style="align-items:flex-start">${ic("receipt")}<div><div class="t">${esc(d.name)}: scade ${d.date === todayISO() ? "oggi" : d.date < todayISO() ? "il " + esc(fmtDateS(d.date)) + " (scaduta)" : "il " + esc(fmtDateS(d.date))}</div><div class="muted sm">${Number(d.amount) ? `<span class="mono">${eur(d.amount)}</span> · ` : ""}${d.pot === false ? "dal conto" : "dalla quota tasse"}</div></div></div><div class="row" style="gap:6px"><button class="btn b-default b-sm" data-act="tax-pay" data-id="${esc(d.id)}">Pagata</button><button class="btn b-outline b-sm" data-tab="entrate">Tasse</button></div></div>`;
   if (S.month === curMonth()) for (const x of expiredSubs()) h += `<div class="alert"><div class="row" style="align-items:flex-start">${ic("cal")}<div><div class="t">${esc(x.name)} è scaduto ${x.renew === todayISO() ? "oggi" : "il " + esc(fmtDateS(x.renew))}</div><div class="muted sm">${esc(eur(x.amount) + " " + freqOf(x.cat === SUBCAT ? 1 : perMonths(x)).per)} · vuoi rinnovarlo o interromperlo?</div></div></div><div class="row" style="gap:6px;flex-wrap:wrap"><button class="btn b-default b-sm" data-act="sub-renew" data-id="${esc(x.id)}">Rinnova</button><button class="btn b-outline b-sm" data-act="sub-stop" data-id="${esc(x.id)}">Interrompi</button></div></div>`;
   if (restCat() && started(S.month)) { const rr = restFor(bud.cats), mn = restMin(), rn = catById(restCat()).name;
     if (rr < -0.5) h += `<div class="alert" style="border-color:var(--destructive)"><div class="row" style="align-items:flex-start;color:var(--destructive)">${ic("info")}<div><div class="t">Budget oltre le entrate di ${eur0(-rr)}</div><div class="sm">${esc(rn)} è a zero. Riduci qualche voce nella sezione Budget.</div></div></div><button class="btn b-outline b-sm" data-act="goto-budget">Budget</button></div>`;
@@ -840,6 +842,7 @@ function fundStatus() {
 }
 
 function txRow(t) {
+  if (t.kind === "tax") return `<div class="trow" style="cursor:default"><div class="ava g-fondo">${ic("receipt")}</div><div class="grow"><div class="t1">${esc(t.note || "Tasse")}</div><div class="t2">Tasse e contributi · ${t.fromPot ? "dalla quota tasse" : "dal conto"}</div></div><div class="am mono">−${eur(t.amount)}</div></div>`;
   const isInc = t.kind === "inc";
   const name = isInc ? (srcById(t.src)?.name || "Entrata") : t.cat === "fondo" ? (annualById(t.annId)?.name || "Spesa annuale") : (catById(t.cat)?.name || t.cat);
   const g = isInc ? "inc" : t.cat === "fondo" ? "fondo" : (catById(t.cat)?.group || "ess");
@@ -1193,10 +1196,77 @@ function viewEntrate() {
 </div></div>
   <div class="card"><div class="card-h"><div><div class="card-t">Registrate a ${esc(mLong(S.month))}</div><div class="card-d">${list.length ? `${list.length} ${list.length === 1 ? "entrata" : "entrate"} · netto <span class="mono">${eur(tot)}</span>` : "Nessuna entrata registrata"}</div></div></div>
     ${list.length ? `<div class="card-c flush">${list.map(txRow).join("")}</div>` : ""}</div>
+  ${taxCard()}
   ${sourcesCard(c)}
   ${histCard(c)}
   <div class="stickybar"><button class="btn b-default" data-act="save-income" style="box-shadow:var(--shadow-lg)">${ic("check")}Salva fonti e storico</button></div>
   </div>`;
+}
+/* ---------- tasse ---------- */
+const taxCfg = () => ({rate:20, base:0, baseDate:"", deadlines:[], ...(S.cfg?.tax || {})});
+function taxStatus() {
+  const t = taxCfg(), from = t.baseDate || "0000-00-00";
+  const set = S.incTx.filter(x => (x.date || "") >= from && !isFixedSrc(x.src) && !isExtraSrc(x.src)).reduce((a, x) => a + (Number(x.gross ?? x.amount) || 0) * t.rate / 100, 0);
+  const paid = S.taxTx.filter(x => x.fromPot && (x.date || "") >= from).reduce((a, x) => a + (Number(x.amount) || 0), 0);
+  const bal = (Number(t.base) || 0) + set - paid;
+  const open = t.deadlines.filter(d => !d.paid).sort((a, b) => a.date.localeCompare(b.date));
+  const due = open.filter(d => d.pot !== false).reduce((a, d) => a + (Number(d.amount) || 0), 0);
+  return {t, set, paid, bal, open, due, gap:bal - due};
+}
+function taxCard() {
+  const x = taxStatus(), today = todayISO();
+  const row = d => { const days = Math.round((new Date(d.date + "T12:00:00") - new Date(today + "T12:00:00")) / 864e5);
+    return `<div class="trow" style="cursor:default;grid-template-columns:36px minmax(0,1fr) auto auto"><div class="ava ${days <= 10 ? "g-ext" : "g-fondo"}">${ic("receipt")}</div><button class="grow" data-act="tax-dl" data-id="${esc(d.id)}" style="all:unset;cursor:pointer;min-width:0"><div class="t1">${esc(d.name || "Scadenza")}</div><div class="t2">${esc(fmtDate(d.date))} · ${days < 0 ? `scaduta da ${-days} giorni` : days === 0 ? "oggi" : `tra ${days} giorni`} · ${d.pot === false ? "dal conto" : "dalla quota tasse"}</div></button><div class="am mono">${Number(d.amount) ? eur(d.amount) : "—"}</div><button class="btn b-outline b-sm" data-act="tax-pay" data-id="${esc(d.id)}">Pagata</button></div>`; };
+  const recent = [...S.taxTx].sort((a, b) => (b.date || "").localeCompare(a.date || "")).slice(0, 3);
+  return `<div class="card"><div class="card-h"><div><div class="card-t">Tasse e contributi</div><div class="card-d">Metti da parte il ${x.t.rate}% del lordo di ogni fattura</div></div><button class="btn b-ghost b-sm" data-act="tax-set">${ic("sliders")}Imposta</button></div>
+    <div class="card-c stack" style="gap:14px">
+      <div class="stats"><div class="stat has-tip" tabindex="0" style="padding:0" aria-describedby="taxTip"><div class="l">Quota tasse <span class="tip-i" aria-hidden="true">?</span></div><div class="tip" role="tooltip" id="taxTip">Quota = saldo iniziale ${eur0(x.t.base)}${x.t.baseDate ? ` al ${esc(fmtDate(x.t.baseDate))}` : ""} + ${x.t.rate}% delle fatture registrate dopo (${eur0(x.set)}) − pagamenti fatti dalla quota (${eur0(x.paid)}). "Da pagare" somma le scadenze future che paghi dalla quota.</div><div class="v mono">${eur0(x.bal)}</div></div><div class="stat" style="padding:0"><div class="l">Da pagare</div><div class="v mono">${eur0(x.due)}</div></div><div class="stat" style="padding:0"><div class="l">${x.gap >= 0 ? "Margine" : "Mancano"}</div><div class="v mono" style="color:${x.gap >= 0 ? "var(--success)" : "var(--destructive)"}">${eur0(Math.abs(x.gap))}</div></div></div>
+    </div>
+    <div class="card-c flush" style="padding-top:0">${x.open.length ? x.open.map(row).join("") : `<div class="empty" style="padding:14px">Nessuna scadenza. Aggiungi le prossime, oppure usa il modello del forfettario.</div>`}</div>
+    <div class="card-c row" style="gap:8px;flex-wrap:wrap;padding-top:0"><button class="btn b-outline b-sm" data-act="tax-dl">${ic("plus")}Aggiungi scadenza</button>${!x.t.deadlines.length ? `<button class="btn b-ghost b-sm" data-act="tax-tpl">${ic("cal")}Scadenze tipiche del forfettario</button>` : ""}</div>
+    ${recent.length ? `<div class="card-c" style="padding-top:0"><div class="xs muted" style="margin-bottom:6px">Pagamenti registrati</div>${recent.map(t => `<div class="between sm" style="padding:4px 0"><span>${esc(fmtDate(t.date))} · ${esc(t.note || "Tasse")}</span><span class="row" style="gap:8px"><span class="mono">${eur(t.amount)}</span><button class="btn b-dghost b-sm" data-act="tax-undo" data-id="${esc(t.id)}">${S.taxUndo === t.id ? "Conferma" : "Annulla"}</button></span></div>`).join("")}</div>` : ""}
+  </div>`;
+}
+function openTaxEdit(mode, id) {
+  const t = taxCfg(), d = id ? t.deadlines.find(x => x.id === id) : null;
+  potState = null; S.taxEdit = mode === "set" ? {mode, rate:String(t.rate), base:String(t.base || "").replace(".", ","), baseDate:t.baseDate || todayISO()}
+    : {mode, id:d?.id || "dl_" + Math.random().toString(36).slice(2, 8), isNew:!d, name:d?.name || "", date:d?.date || "", amount:d ? String(d.amount || "").replace(".", ",") : "", pot:d ? d.pot !== false : true};
+  const bg = document.createElement("div"); bg.className = "ovl"; bg.id = "taxBg";
+  bg.innerHTML = `<div class="drawer" role="dialog" aria-modal="true" aria-labelledby="txTitle" id="taxd"></div>`;
+  document.body.appendChild(bg); document.body.style.overflow = "hidden";
+  bg.addEventListener("click", e => { if (e.target === bg) closeTaxEdit(); });
+  drawTaxEdit(); enableSwipeClose(bg, closeTaxEdit);
+}
+function closeTaxEdit() { closeOverlay("taxBg"); S.taxEdit = null; }
+function drawTaxEdit() {
+  const el = $("#taxd"), x = S.taxEdit; if (!el || !x) return;
+  const head = (t, d) => `<div class="handle-zone"><div class="handle"></div></div><div class="between"><div><h2 id="txTitle" style="font-size:17px;font-weight:600">${t}</h2><p class="muted sm">${d}</p></div><button class="btn b-ghost b-icon b-sm" data-act="tax-close" aria-label="Chiudi">${ic("x")}</button></div>`;
+  if (x.mode === "set") el.innerHTML = head("Quota tasse", "Come calcolare quanto hai da parte") + `
+    <div class="grid2"><div class="field"><label for="txRate">Da mettere da parte %</label><input id="txRate" class="inp mono" inputmode="decimal" value="${esc(x.rate)}"></div><div class="field"><label for="txBase">Saldo quota tasse €</label><input id="txBase" class="inp mono" inputmode="decimal" placeholder="0" value="${esc(x.base)}"></div></div>
+    <div class="field"><label for="txBaseDate">Saldo alla data</label><input id="txBaseDate" class="inp" type="date" value="${esc(x.baseDate)}"></div>
+    <p class="xs muted">Scrivi quanto hai oggi sul conto delle tasse: da quella data l'app aggiunge la percentuale di ogni fattura registrata e toglie i pagamenti fatti dalla quota.</p>
+    <div class="dfoot"><span class="grow"></span><button class="btn b-outline" data-act="tax-close">Annulla</button><button class="btn b-default" data-act="tax-save">Salva</button></div>`;
+  else el.innerHTML = head(x.isNew ? "Nuova scadenza" : "Modifica scadenza", "F24, Quota B ENPAM o altro") + `
+    <div class="field"><label for="txName">Nome</label><input id="txName" class="inp" placeholder="es. Secondo acconto 2026" value="${esc(x.name)}"></div>
+    <div class="grid2"><div class="field"><label for="txDate">Scadenza</label><input id="txDate" class="inp" type="date" value="${esc(x.date)}"></div><div class="field"><label for="txAmt">Importo €</label><input id="txAmt" class="inp mono" inputmode="decimal" placeholder="0,00" value="${esc(x.amount)}"></div></div>
+    <div class="field"><span class="lab">Si paga</span><div class="tlist" role="tablist"><button class="tab" role="tab" data-act="tax-pot" data-v="1" aria-selected="${x.pot}">Dalla quota tasse</button><button class="tab" role="tab" data-act="tax-pot" data-v="0" aria-selected="${!x.pot}">Dal conto</button></div></div>
+    <div class="dfoot">${x.isNew ? "" : `<button class="btn ${x.confirmDel ? "b-destructive" : "b-dghost"}" data-act="tax-del">${ic("trash")}${x.confirmDel ? "Conferma" : "Elimina"}</button>`}<span class="grow"></span><button class="btn b-outline" data-act="tax-close">Annulla</button><button class="btn b-default" data-act="tax-save">Salva</button></div>`;
+}
+function readTaxInputs() { const x = S.taxEdit; if (!x) return; if (x.mode === "set") { x.rate = $("#txRate").value; x.base = $("#txBase").value; x.baseDate = $("#txBaseDate").value; } else { x.name = $("#txName").value; x.date = $("#txDate").value; x.amount = $("#txAmt").value; } }
+async function saveTax(del) {
+  readTaxInputs(); const x = S.taxEdit, cfg = structuredClone(S.cfg); cfg.tax = {...taxCfg(), deadlines:[...taxCfg().deadlines]};
+  if (x.mode === "set") { const rate = parseAmt(x.rate); if (!isFinite(rate) || rate < 0 || rate > 100) return toast("Percentuale non valida"); cfg.tax.rate = r2(rate); cfg.tax.base = r2(parseAmt(x.base || "0") || 0); cfg.tax.baseDate = x.baseDate || todayISO(); }
+  else if (del) cfg.tax.deadlines = cfg.tax.deadlines.filter(d => d.id !== x.id);
+  else { if (!/^\d{4}-\d{2}-\d{2}$/.test(x.date)) return toast("Scegli la data di scadenza"); const it = {id:x.id, name:x.name.trim() || "Scadenza", date:x.date, amount:r2(parseAmt(x.amount || "0") || 0), pot:x.pot, paid:false};
+    const i = cfg.tax.deadlines.findIndex(d => d.id === x.id); if (i >= 0) cfg.tax.deadlines[i] = {...cfg.tax.deadlines[i], ...it, paid:cfg.tax.deadlines[i].paid}; else cfg.tax.deadlines.push(it); }
+  try { await S.db.doc("config/main").set(cfg); S.cfg = cfg; closeTaxEdit(); render(); toast(del ? "Scadenza eliminata" : "Salvato"); } catch (e) { fail(e); }
+}
+async function payDeadline(id) {
+  const cfg = structuredClone(S.cfg), d = cfg.tax?.deadlines?.find(x => x.id === id); if (!d) return;
+  if (!(Number(d.amount) > 0)) { toast("Inserisci prima l'importo"); return openTaxEdit("dl", id); }
+  const day = todayISO(); d.paid = true;
+  try { await S.db.collection("tx").doc().set({kind:"tax", amount:r2(d.amount), date:day, month:day.slice(0, 7), note:d.name, fromPot:d.pot !== false, dlId:d.id, created:Date.now()});
+    await S.db.doc("config/main").set(cfg); S.cfg = cfg; render(); toast(`${d.name} segnata come pagata`); } catch (e) { fail(e); }
 }
 /* legge fonti e storico dalla pagina (Entrate) */
 function readIncome(cfg) {
@@ -1275,7 +1345,7 @@ function drawSheet(focus) {
     <div class="between"><div><h2 id="sTitle" style="font-size:17px;font-weight:600">${st.id ? "Modifica movimento" : "Nuovo movimento"}</h2><p class="muted sm">${isInc ? (src?.kind === "extra" ? "Un'entrata senza tasse, ad esempio una vendita su Vinted" : "Scrivi il fatturato: il netto si calcola da solo") : "Importo, categoria e salva"}</p></div><button class="btn b-ghost b-icon b-sm" data-act="s-close" aria-label="Chiudi">${ic("x")}</button></div>
     <div class="tlist" role="tablist" aria-label="Tipo"><button class="tab" role="tab" data-s="kind" data-v="exp" aria-selected="${!isInc}">${ic("out")}Uscita</button><button class="tab" role="tab" data-s="kind" data-v="inc" aria-selected="${isInc}">${ic("in")}Entrata</button></div>
     <div class="stack" style="gap:2px"><div class="amt"><span>€</span><input id="sAmt" inputmode="decimal" autocomplete="off" placeholder="0,00" value="${esc(st.amountStr)}" aria-label="${isInc ? "Fatturato" : "Importo"}"></div>
-    ${isInc ? `<p class="xs muted" style="text-align:center">La borsa è già contata in automatico ogni mese.</p><div class="muted sm" id="sNet" style="text-align:center">${src?.kind === "extra" ? "Nessuna tassa · conta solo in questo mese" : src ? (net != null ? `Netto (${src.pct}%) <b class="mono" style="color:var(--foreground)">${eur(net)}</b>` : `Netto al ${src.pct}% del fatturato`) : "Scegli la fonte"}</div>` : ""}</div>
+    ${isInc ? `<p class="xs muted" style="text-align:center">La borsa è già contata in automatico ogni mese.</p><div class="muted sm" id="sNet" style="text-align:center">${src?.kind === "extra" ? "Nessuna tassa · conta solo in questo mese" : src ? (net != null ? `Netto (${src.pct}%) <b class="mono" style="color:var(--foreground)">${eur(net)}</b> · da mettere nella quota tasse <b class="mono" style="color:var(--foreground)">${eur(amt * taxCfg().rate / 100)}</b>` : `Netto al ${src.pct}% del fatturato`) : "Scegli la fonte"}</div>` : ""}</div>
     ${!st.id && !isInc ? repeatHtml() : ""}
     <div class="field"><span class="lab">${isInc ? "Fonte" : "Categoria"}</span><div class="togs" role="group" aria-label="${isInc ? "Fonte" : "Categoria"}">
       ${isInc ? [...(S.cfg.sources || []).filter(s => !(Number(s.fixed) > 0)), EXTRA].map(s => `<button class="tog" data-s="src" data-v="${esc(s.id)}" aria-pressed="${st.src === s.id}">${s.kind === "extra" ? `<span class="gd g-inc"></span>Extra senza tasse` : esc(s.name)}</button>`).join("")
@@ -1670,6 +1740,20 @@ document.addEventListener("click", async e => {
   if (act === "bud-avg") { if (!S.budgetDraft) return; let n = 0;
     cats().filter(c => !c.fixed && c.group !== "ris" && !isAuto(c) && !isRest(c)).forEach(c => { const v = avg3(c.id); if (v != null) { S.budgetDraft[c.id] = Math.round(v / 5) * 5; n++; } });
     render(); toast(n ? `Medie applicate a ${n} voci: controlla e salva` : "Non ci sono ancora abbastanza dati"); return; }
+  if (act === "tax-set") return openTaxEdit("set");
+  if (act === "tax-dl") return openTaxEdit("dl", a.dataset.id);
+  if (act === "tax-close") return closeTaxEdit();
+  if (act === "tax-save") return saveTax(false);
+  if (act === "tax-del") { if (!S.taxEdit.confirmDel) { readTaxInputs(); S.taxEdit.confirmDel = true; return drawTaxEdit(); } return saveTax(true); }
+  if (act === "tax-pot") { readTaxInputs(); S.taxEdit.pot = a.dataset.v === "1"; return drawTaxEdit(); }
+  if (act === "tax-pay") return payDeadline(a.dataset.id);
+  if (act === "tax-tpl") { const y = Number(todayISO().slice(0, 4)), now = todayISO(), cfg = structuredClone(S.cfg); cfg.tax = {...taxCfg(), deadlines:[...taxCfg().deadlines]};
+    const nx = md => { let d = `${y}-${md}`; if (d < now) d = `${y + 1}-${md}`; return d; };
+    [["Quota B ENPAM", "10-31", false], ["Secondo acconto imposta", "11-30", true], ["Saldo e primo acconto imposta", "06-30", true]].forEach(([n, md, pot]) => cfg.tax.deadlines.push({id:"dl_" + Math.random().toString(36).slice(2, 8), name:n, date:nx(md), amount:0, pot, paid:false}));
+    try { await S.db.doc("config/main").set(cfg); S.cfg = cfg; render(); toast("Scadenze aggiunte: inserisci gli importi"); } catch (er) { fail(er); } return; }
+  if (act === "tax-undo") { if (S.taxUndo !== a.dataset.id) { S.taxUndo = a.dataset.id; render(); return; }
+    const t = S.taxTx.find(x => x.id === a.dataset.id); S.taxUndo = null; if (!t) return;
+    try { await S.db.doc("tx/" + t.id).delete(); if (t.dlId) { const cfg = structuredClone(S.cfg); const d = cfg.tax?.deadlines?.find(x => x.id === t.dlId); if (d) { d.paid = false; await S.db.doc("config/main").set(cfg); S.cfg = cfg; } } render(); toast("Pagamento annullato"); } catch (er) { fail(er); } return; }
   if (act === "rec-toggle") { S.recOpen = !S.recOpen; render(); return; }
   if (act === "goto-budget") { S.view = "budget"; window.scrollTo(0, 0); render(); return; }
   if (act === "filter-cat") { S.catFilter = a.dataset.id; S.tagFilter = ""; S.unsubTag?.(); S.tagView = ""; S.tagTx = null; S.view = "movimenti"; window.scrollTo(0, 0); render(); return; }
@@ -1732,7 +1816,7 @@ document.addEventListener("input", e => {
   if ((t.id === "abAmt" || t.id === "abDue" || t.id === "abAuto") && subState?.item && $("#abHint")) { readSubInputs(); $("#abHint").innerHTML = subHint(subState.item); }
   if (t.id === "abAmt" && subState?.mode === "renew" && $("#abPayL")) { const v = parseAmt(t.value); $("#abPayL b").textContent = isFinite(v) && v > 0 ? eur(v) : "—"; }
   if (t.id === "sAmt" && sheetState?.from && $("#sFrom")) { sheetState.amountStr = t.value; $("#sFrom").innerHTML = fromHint(sheetState); }
-  if (t.id === "sAmt" && sheetState?.kind === "inc" && !isExtraSrc(sheetState.src)) { const src = srcById(sheetState.src); const n = $("#sNet"); const v = parseAmt(t.value); if (n && src) n.innerHTML = isFinite(v) ? `Netto (${src.pct}%) <b class="mono" style="color:var(--foreground)">${eur(v * src.pct / 100)}</b>` : `Netto al ${src.pct}% del fatturato`; }
+  if (t.id === "sAmt" && sheetState?.kind === "inc" && !isExtraSrc(sheetState.src)) { const src = srcById(sheetState.src); const n = $("#sNet"); const v = parseAmt(t.value); if (n && src) n.innerHTML = isFinite(v) ? `Netto (${src.pct}%) <b class="mono" style="color:var(--foreground)">${eur(v * src.pct / 100)}</b> · da mettere nella quota tasse <b class="mono" style="color:var(--foreground)">${eur(v * taxCfg().rate / 100)}</b>` : `Netto al ${src.pct}% del fatturato`; }
 });
 document.addEventListener("change", e => {
   if (e.target.id === "abAuto" && subState?.item && $("#abHint")) { readSubInputs(); $("#abHint").innerHTML = subHint(subState.item); }
@@ -1753,6 +1837,7 @@ document.addEventListener("change", e => {
     if (Math.abs(dx) > 70 && Math.abs(dy) < 45 && Date.now() - t0 < 600) (dx < 0 ? $("#nextM") : $("#prevM")).click();
     x0 = null; }, {passive:true}); })();
 document.addEventListener("keydown", e => {
+  if (S.taxEdit) { if (e.key === "Escape") closeTaxEdit(); if (e.key === "Enter" && e.target.tagName === "INPUT") { e.preventDefault(); saveTax(false); } return; }
   if (potState) { if (e.key === "Escape") closePotEdit(); if (e.key === "Enter" && e.target.tagName === "INPUT" && e.target.type !== "checkbox") { e.preventDefault(); savePot(); } return; }
   if (subState) { if (e.key === "Escape") closeSubs(); if (e.key === "Enter" && e.target.tagName === "INPUT" && subState.mode === "edit") { e.preventDefault(); saveSub(); } return; }
   if (fundState) { if (e.key === "Escape") closeFund(); if (e.key === "Enter" && e.target.tagName === "INPUT" && fundState.mode === "edit") { e.preventDefault(); saveFundItem(); } return; }
