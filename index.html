@@ -517,7 +517,7 @@ const started = m => !!(S.cfg?.startMonth && m >= S.cfg.startMonth);
 /* durata del periodo: 12 per le spese annuali, 3/6/12 per gli abbonamenti non mensili */
 const perMonths = a => Number(a.months) || 12;
 const accrualOf = a => mineA(a) / perMonths(a);
-const FREQS = [{m:1, n:"Mensile", per:"al mese"}, {m:3, n:"Trimestrale", per:"ogni 3 mesi"}, {m:6, n:"Semestrale", per:"ogni 6 mesi"}, {m:12, n:"Annuale", per:"l'anno"}];
+const FREQS = [{m:1, n:"Mensile", per:"al mese"}, {m:2, n:"Bimestrale", per:"ogni 2 mesi"}, {m:3, n:"Trimestrale", per:"ogni 3 mesi"}, {m:6, n:"Semestrale", per:"ogni 6 mesi"}, {m:12, n:"Annuale", per:"l'anno"}];
 const freqOf = m => FREQS.find(f => f.m === Number(m)) || FREQS[3];
 const addMonthsISO = (d, k) => { const [y, mo, dd] = d.split("-").map(Number); const t = new Date(y, mo - 1 + k, 1); return isoOf(new Date(t.getFullYear(), t.getMonth(), Math.min(dd, new Date(t.getFullYear(), t.getMonth() + 1, 0).getDate()))); };
 const addDaysISO = (d, k) => { const [y, mo, dd] = d.split("-").map(Number); return isoOf(new Date(y, mo - 1, dd + k)); };
@@ -527,8 +527,8 @@ const fmtDate = iso => new Intl.DateTimeFormat("it-IT", {day:"numeric", month:"s
 /* rinnovo automatico: di default sì per i mensili, no per gli altri (alla scadenza l'app chiede cosa fare) */
 const autoOf = x => x.auto ?? (x.cat === SUBCAT);
 const isExpired = x => !!x.renew && !autoOf(x) && x.renew <= todayISO();
-const expiredSubs = () => [...subs(), ...annSubs()].filter(isExpired).sort((a, b) => a.renew.localeCompare(b.renew));
-const subById = id => subs().find(y => y.id === id) || annSubs().find(y => y.id === id);
+const expiredSubs = () => [...subs(), ...(S.cfg?.annual || [])].filter(isExpired).sort((a, b) => a.renew.localeCompare(b.renew));
+const subById = id => subs().find(y => y.id === id) || (S.cfg?.annual || []).find(y => y.id === id);
 function nextRenew(x) {
   if (x.renew && !autoOf(x)) return x.renew;
   const base = x.renew || (x.due ? `${curMonth().slice(0, 4)}-${pad(x.due)}-01` : ""); if (!base) return "";
@@ -792,7 +792,8 @@ function viewMese() {
     if (show) h += `<div class="alert"><div class="row" style="align-items:flex-start">${ic("check")}<div><div class="t">Chiudi ${esc(mLong(show))}</div><div class="muted sm">Calcola l'avanzo e registra i versamenti di ${esc(mLong(addMonth(show, 1)))} in un passaggio</div></div></div><button class="btn b-default b-sm" data-act="cl-open" data-m="${esc(show)}">Chiudi il mese</button></div>`;
     else if (isClosed(S.month)) { const cl = S.cfg.closed[S.month]; h += `<div class="xs muted row" style="gap:6px">${ic("check")}Mese chiuso il ${esc(fmtDate(cl.date))}${cl.avanzo ? ` · avanzo ${eur(cl.avanzo)}` : ""}</div>`; } }
   if (S.month === curMonth()) for (const d of taxStatus().open.filter(d => d.date <= addDaysISO(todayISO(), 10))) h += `<div class="alert"><div class="row" style="align-items:flex-start">${ic("receipt")}<div><div class="t">${esc(d.name)}: scade ${d.date === todayISO() ? "oggi" : d.date < todayISO() ? "il " + esc(fmtDateS(d.date)) + " (scaduta)" : "il " + esc(fmtDateS(d.date))}</div><div class="muted sm">${Number(d.amount) ? `<span class="mono">${eur(d.amount)}</span> · ` : ""}${d.pot === false ? "dal conto" : "dalla quota tasse"}</div></div></div><div class="row" style="gap:6px"><button class="btn b-default b-sm" data-act="tax-pay" data-id="${esc(d.id)}">Pagata</button><button class="btn b-outline b-sm" data-tab="entrate">Tasse</button></div></div>`;
-  if (S.month === curMonth()) for (const x of expiredSubs()) h += `<div class="alert"><div class="row" style="align-items:flex-start">${ic("cal")}<div><div class="t">${esc(x.name)} è scaduto ${x.renew === todayISO() ? "oggi" : "il " + esc(fmtDateS(x.renew))}</div><div class="muted sm">${esc(eur(x.amount) + " " + freqOf(x.cat === SUBCAT ? 1 : perMonths(x)).per)} · vuoi rinnovarlo o interromperlo?</div></div></div><div class="row" style="gap:6px;flex-wrap:wrap"><button class="btn b-default b-sm" data-act="sub-renew" data-id="${esc(x.id)}">Rinnova</button><button class="btn b-outline b-sm" data-act="sub-stop" data-id="${esc(x.id)}">Interrompi</button></div></div>`;
+  if (S.month === curMonth()) for (const x of expiredSubs()) { const fund = x.cat !== SUBCAT && !x.sub, when = x.renew === todayISO() ? "oggi" : "il " + esc(fmtDateS(x.renew));
+    h += `<div class="alert"><div class="row" style="align-items:flex-start">${ic(fund ? "receipt" : "cal")}<div><div class="t">${fund ? `${esc(x.name)}: scadenza ${when}` : `${esc(x.name)} è scaduto ${when}`}</div><div class="muted sm">${esc(eur(x.amount) + " " + freqOf(x.cat === SUBCAT ? 1 : perMonths(x)).per)} · ${fund ? "pagata? Registrala e aggiorna l'importo" : "vuoi rinnovarlo o interromperlo?"}</div></div></div><div class="row" style="gap:6px;flex-wrap:wrap"><button class="btn b-default b-sm" data-act="sub-renew" data-id="${esc(x.id)}">${fund ? "Pagata" : "Rinnova"}</button><button class="btn b-outline b-sm" data-act="sub-stop" data-id="${esc(x.id)}">${fund ? "Non c'è più" : "Interrompi"}</button></div></div>`; }
   if (restCat() && started(S.month)) { const rr = restFor(bud.cats), mn = restMin(), rn = catById(restCat()).name;
     if (rr < -0.5) h += `<div class="alert" style="border-color:var(--destructive)"><div class="row" style="align-items:flex-start;color:var(--destructive)">${ic("info")}<div><div class="t">Budget oltre le entrate di ${eur0(-rr)}</div><div class="sm">${esc(rn)} è a zero. Riduci qualche voce nella sezione Budget.</div></div></div><button class="btn b-outline b-sm" data-act="goto-budget">Budget</button></div>`;
     else if (rr < mn - 0.5) h += `<div class="alert" style="border-color:var(--destructive)"><div class="row" style="align-items:flex-start;color:var(--destructive)">${ic("info")}<div><div class="t">${esc(rn)} sotto il minimo: ${eur0(rr)} su ${eur0(mn)}</div><div class="sm">Riduci altre voci di ${eur0(mn - rr)} nella sezione Budget.</div></div></div><button class="btn b-outline b-sm" data-act="goto-budget">Budget</button></div>`; }
@@ -1327,9 +1328,10 @@ function viewAltro() {
   <div class="sec" data-sec="rules">${tblCard("rules", "Regole automatiche", "Se la nota di una spesa contiene il testo, la categoria si sceglie da sola", [["La nota contiene"], ["Categoria"], [""]], c.rules || [], ROW.rules, "Aggiungi regola", `<p class="xs muted" style="margin-top:10px">Esempi: "esselunga" → Spesa alimentare, "q8" → Carburante. Non conta maiuscole e minuscole. Se nessuna regola corrisponde, l'app usa la categoria dell'ultima spesa con la stessa nota.</p>`)}</div>
   <div class="sec" data-sec="general"><div class="card"><div class="card-h"><div><div class="card-t">Aspetto</div><div class="card-d">Vale solo per questo dispositivo</div></div></div><div class="card-c"><div class="tlist" role="tablist" aria-label="Tema" style="width:auto;display:inline-grid">${[["auto", "Automatico"], ["light", "Chiaro"], ["dark", "Scuro"]].map(([k, n]) => `<button class="tab" role="tab" data-act="set-theme" data-v="${k}" aria-selected="${k === th}">${n}</button>`).join("")}</div></div></div></div>
   <div class="sec" data-sec="annual">
-  ${tblCard("annual", "Spese annuali", `Accantonate ogni mese nel fondo · totale <span class="mono">${eur(monthlyAccrualAll())}</span>/mese, abbonamenti annuali inclusi`, [["Voce"], ["Annuo", "r"], ["Tua %", "r"], ["Scadenza"], ["Al mese", "r"], [""]], c.annual || [], a => ROW.annual(a, paidYr(a.id)), "Aggiungi voce",
-    `<div class="grid2" style="margin-top:16px"><div class="field"><label for="fundInitial">Saldo iniziale del fondo</label><input class="inp" id="fundInitial" inputmode="decimal" value="${esc(String(c.fundInitial || 0).replace(".", ","))}"></div><div class="field"><label for="startMonth">Accantona a partire da</label><input class="inp" id="startMonth" type="month" value="${esc(c.startMonth || curMonth())}"></div></div>
-    <p class="xs muted" style="margin-top:10px">"Tua %" serve per le spese che dividi, ad esempio bollette al 50%.</p>`)}
+  <div class="card"><div class="card-h"><div><div class="card-t">Spese annuali</div><div class="card-d">Accantonate ogni mese nel fondo · totale <span class="mono">${eur(monthlyAccrualAll())}</span>/mese, abbonamenti inclusi</div></div><button class="btn b-default b-sm" data-act="open-fund">${ic("sliders")}Gestisci voci</button></div>
+  <div class="card-c flush" style="padding-top:0">${(c.annual || []).filter(a => !a.sub).map(a => { const nr = nextRenew(a); return `<button class="trow" data-act="fund-open-edit" data-id="${esc(a.id)}" style="grid-template-columns:36px minmax(0,1fr) auto"><div class="ava g-fondo">${ic("receipt")}</div><div class="grow"><div class="t1">${esc(a.name)}</div><div class="t2">${esc([eur(a.amount) + " " + freqOf(perMonths(a)).per, (a.share ?? 100) !== 100 ? `tua quota ${a.share}%` : "", nr ? "scade il " + fmtDateS(nr) : "scadenza da inserire"].filter(Boolean).join(" · "))}</div></div><div class="am mono">${eur(accrualOf(a))}<span class="muted xs">/mese</span></div></button>`; }).join("")}</div>
+  <div class="card-c"><div class="grid2"><div class="field"><label for="fundInitial">Saldo iniziale del fondo</label><input class="inp" id="fundInitial" inputmode="decimal" value="${esc(String(c.fundInitial || 0).replace(".", ","))}"></div><div class="field"><label for="startMonth">Accantona a partire da</label><input class="inp" id="startMonth" type="month" value="${esc(c.startMonth || curMonth())}"></div></div>
+    <p class="xs muted" style="margin-top:10px">Per aggiungere o modificare una voce (importo, frequenza, scadenza) tocca la voce o "Gestisci voci".</p></div></div>
   </div><div class="sec" data-sec="recurring">
   ${tblCard("recurring", "Ricorrenti mensili", "Proposte ogni mese, le registri con un tap. Gli abbonamenti si gestiscono a parte.", [["Voce"], ["Importo", "r"], ["Categoria"], [""]], (c.recurring || []).filter(x => x.cat !== SUBCAT), ROW.recurring, "Aggiungi ricorrente", `<div style="margin-top:10px"><button class="btn b-outline b-sm" data-act="open-subs">${ic("repeat")}Gestisci abbonamenti (${subs().length + annSubs().length})</button></div>`)}
   </div><div class="sec" data-sec="general">
@@ -1456,7 +1458,6 @@ function readSettings() {
   const cfg = structuredClone(S.cfg);
   const rows = kind => [...document.querySelectorAll(`tr[data-row="${kind}"]`)].map(tr => { const o = {id:tr.dataset.id}; tr.querySelectorAll("[data-f]").forEach(i => { o[i.dataset.f] = i.type === "checkbox" ? i.checked : i.value; }); return o; });
   const prev = (kind, id) => (S.cfg[kind] || []).find(x => x.id === id) || {};
-  cfg.annual = rows("annual").filter(a => a.name.trim()).map(a => ({...prev("annual", a.id), id:a.id, name:a.name.trim(), amount:r2(parseAmt(a.amount) || 0), share:Math.max(0, Math.min(100, Number(a.share) || 0)), due:a.due ? Number(a.due) : null}));
   cfg.recurring = [...rows("recurring").filter(a => a.name.trim()).map(a => ({id:a.id, name:a.name.trim(), amount:r2(parseAmt(a.amount) || 0), cat:a.cat})), ...(S.cfg.recurring || []).filter(x => x.cat === SUBCAT)];
   cfg.categories = rows("categories").filter(a => a.name.trim()).map(a => ({...prev("categories", a.id), id:a.id, name:a.name.trim(), group:a.group, fixed:!!a.fixed, defaultBudget:r2(parseAmt(a.defaultBudget) || 0), hidden:!a.active}));
   cfg.rules = rows("rules").filter(r => r.match.trim()).map(r => ({id:r.id, match:r.match.trim(), cat:r.cat}));
@@ -1674,27 +1675,28 @@ function drawFund() {
       <div class="stats"><div class="card stat"><div class="l">Accantonato</div><div class="v mono">${eur0(f.accrued)}</div></div><div class="card stat"><div class="l">Pagato</div><div class="v mono">${eur0(f.paid)}</div></div><div class="card stat"><div class="l">Disponibile</div><div class="v mono" style="color:${f.avail < 0 ? "var(--destructive)" : "var(--success)"}">${eur0(f.avail)}</div></div></div>
       <div class="card"><div class="card-c flush">${list.length ? list.map(a => {
         const p = paidYr(a.id);
-        const sub = [`${eur0(a.amount)} l'anno`, (a.share ?? 100) !== 100 ? `tua quota ${a.share}%` : "", a.due ? "scade a " + mLong(`2026-${pad(a.due)}`) : ""].filter(Boolean).join(" · ");
-        return `<button class="trow" data-act="fund-edit" data-id="${esc(a.id)}" style="grid-template-columns:minmax(0,1fr) auto"><div class="grow"><div class="t1 row" style="gap:6px"><span style="overflow:hidden;text-overflow:ellipsis">${esc(a.name)}</span>${!(Number(a.amount) > 0) ? `<span class="badge bd-warning">importo da inserire</span>` : ""}${p ? `<span class="badge bd-success">pagato ${eur0(p)}</span>` : ""}</div><div class="t2">${esc(sub)}</div></div><div class="am mono">${eur(mine(a) / 12)}<span class="muted xs">/mese</span></div></button>`;
+        const nr = nextRenew(a); const sub = [`${eur(a.amount)} ${freqOf(perMonths(a)).per}`, (a.share ?? 100) !== 100 ? `tua quota ${a.share}%` : "", nr ? (a.renew ? (isExpired(a) ? "scaduta il " : "scade il ") + fmtDateS(nr) : "scade a " + mLong(nr.slice(0, 7))) : ""].filter(Boolean).join(" · ");
+        return `<button class="trow" data-act="fund-edit" data-id="${esc(a.id)}" style="grid-template-columns:minmax(0,1fr) auto"><div class="grow"><div class="t1 row" style="gap:6px"><span style="overflow:hidden;text-overflow:ellipsis">${esc(a.name)}</span>${!(Number(a.amount) > 0) ? `<span class="badge bd-warning">importo da inserire</span>` : ""}${p ? `<span class="badge bd-success">pagato ${eur0(p)}</span>` : ""}</div><div class="t2">${esc(sub)}</div></div><div class="am mono">${eur(accrualOf(a))}<span class="muted xs">/mese</span></div></button>`;
       }).join(`<div class="sep"></div>`) : `<div class="empty">Nessuna voce. Aggiungi la prima.</div>`}</div></div>
       <div class="dfoot"><button class="btn b-default" data-act="fund-new">${ic("plus")}Aggiungi voce</button><span class="grow"></span><button class="btn b-outline" data-act="fund-close">Chiudi</button></div>`;
     return;
   }
   const a = fundState.item;
-  const months = [...Array(12)].map((_, i) => `<option value="${i + 1}" ${Number(a.due) === i + 1 ? "selected" : ""}>${esc(mLong(`2026-${pad(i + 1)}`))}</option>`).join("");
-  const amt = parseAmt(a.amountStr), sh = Number(a.shareStr);
+  const amt = parseAmt(a.amountStr), sh = Number(a.shareStr), fq = freqOf(a.months || 12);
   el.innerHTML = `<div class="handle-zone"><div class="handle"></div></div>
     <div class="between"><div class="row"><button class="btn b-ghost b-icon b-sm" data-act="fund-back" aria-label="Torna all'elenco"><svg class="i" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg></button><h2 id="fTitle" style="font-size:17px;font-weight:600">${a.isNew ? "Nuova voce" : "Modifica voce"}</h2></div><button class="btn b-ghost b-icon b-sm" data-act="fund-close" aria-label="Chiudi">${ic("x")}</button></div>
     <div class="field"><label for="fName">Nome</label><input id="fName" class="inp" placeholder="es. Bollo auto" value="${esc(a.name)}"></div>
-    <div class="grid2"><div class="field"><label for="fAmt">Importo annuo €</label><input id="fAmt" class="inp mono" inputmode="decimal" placeholder="0,00" value="${esc(a.amountStr)}"></div>
+    <div class="field"><span class="lab">Si paga</span><div class="togs" role="group" aria-label="Frequenza">${FREQS.filter(f => f.m > 1).map(f => `<button class="tog" data-act="fund-freq" data-v="${f.m}" aria-pressed="${f.m === fq.m}">${f.n}</button>`).join("")}</div></div>
+    <div class="grid2"><div class="field"><label for="fAmt">Importo ${fq.per} €</label><input id="fAmt" class="inp mono" inputmode="decimal" placeholder="0,00" value="${esc(a.amountStr)}"></div>
       <div class="field"><label for="fShare">Tua quota %</label><input id="fShare" class="inp mono" inputmode="numeric" value="${esc(a.shareStr)}"></div></div>
-    <div class="field"><label for="fDue">Mese di scadenza</label><select id="fDue" class="inp"><option value="">Nessuna data fissa</option>${months}</select></div>
-    <div class="card"><div class="card-c between sm"><span class="muted">Accantonamento al mese</span><b class="mono" id="fMonthly">${eur((isFinite(amt) ? amt : 0) * ((isFinite(sh) ? sh : 100) / 100) / 12)}</b></div></div>
-    <p class="xs muted">La quota serve per le spese che dividi (es. 50% per le bollette). Con il mese di scadenza, l'app ti avvisa nei due mesi prima.</p>
+    <div class="field"><label for="fRenew">Prossima scadenza</label><input id="fRenew" class="inp" type="date" value="${esc(a.renew || "")}"></div>
+    <label class="row sm" style="gap:8px;cursor:pointer"><input type="checkbox" id="fAsk" ${a.ask ? "checked" : ""}>Alla scadenza chiedimi se è pagata e se l'importo è cambiato</label>
+    <div class="card"><div class="card-c between sm"><span class="muted">Accantonamento al mese</span><b class="mono" id="fMonthly">${eur((isFinite(amt) ? amt : 0) * ((isFinite(sh) ? sh : 100) / 100) / fq.m)}</b></div></div>
+    <p class="xs muted">La quota serve per le spese che dividi (es. 50% per le bollette). Con la scadenza l'app ti avvisa nei due mesi prima e, se lo chiedi, il giorno stesso.</p>
     <div class="dfoot">${a.isNew ? "" : `<button class="btn ${fundState.confirmDel ? "b-destructive" : "b-dghost"}" data-act="fund-del">${ic("trash")}${fundState.confirmDel ? "Conferma" : "Elimina"}</button>`}<span class="grow"></span><button class="btn b-outline" data-act="fund-back">Annulla</button><button class="btn b-default" data-act="fund-save" id="fSave">Salva</button></div>`;
   if (a.isNew) setTimeout(() => $("#fName")?.focus(), 40);
 }
-function readFundInputs() { const a = fundState?.item; if (!a || !$("#fName")) return; a.name = $("#fName").value; a.amountStr = $("#fAmt").value; a.shareStr = $("#fShare").value; a.due = $("#fDue").value; }
+function readFundInputs() { const a = fundState?.item; if (!a || !$("#fName")) return; a.name = $("#fName").value; a.amountStr = $("#fAmt").value; a.shareStr = $("#fShare").value; a.renew = $("#fRenew").value; a.ask = $("#fAsk").checked; }
 async function saveFundItem() {
   readFundInputs(); const a = fundState.item;
   const name = a.name.trim(), amount = parseAmt(a.amountStr || "0"), share = a.shareStr === "" ? 100 : Number(a.shareStr);
@@ -1702,7 +1704,8 @@ async function saveFundItem() {
   if (!isFinite(amount) || amount < 0) return toast("Importo non valido");
   if (!isFinite(share) || share < 0 || share > 100) return toast("La quota va da 0 a 100");
   const cfg = structuredClone(S.cfg); cfg.annual = cfg.annual || [];
-  const item = {id:a.id, name, amount:r2(amount), share, due:a.due ? Number(a.due) : null};
+  const renew = /^\d{4}-\d{2}-\d{2}$/.test(a.renew || "") ? a.renew : null;
+  const item = {id:a.id, name, amount:r2(amount), share, months:Number(a.months) || 12, renew, auto:!a.ask, due:renew ? Number(renew.slice(5, 7)) : (Number(a.due) || null)};
   const i = cfg.annual.findIndex(x => x.id === a.id);
   if (i >= 0) cfg.annual[i] = {...cfg.annual[i], ...item}; else cfg.annual.push(item);
   $("#fSave").disabled = true;
@@ -1748,20 +1751,20 @@ function drawSubs() {
   if (subState.mode === "renew") {
     const amt = parseAmt(x.amountStr || ""), stop = subState.confirmStop;
     el.innerHTML = `<div class="handle-zone"><div class="handle"></div></div>
-      <div class="between"><div><h2 id="abTitle" style="font-size:17px;font-weight:600">${esc(x.name)}</h2><p class="muted sm">Scaduto ${x.oldRenew === todayISO() ? "oggi" : "il " + esc(fmtDate(x.oldRenew))} · rinnovalo o interrompilo</p></div><button class="btn b-ghost b-icon b-sm" data-act="subs-close" aria-label="Chiudi">${ic("x")}</button></div>
-      <div class="field"><span class="lab">Rinnova per</span><div class="togs" role="group" aria-label="Durata del rinnovo">${FREQS.map(f => `<button class="tog" data-act="subs-freq" data-v="${f.m}" aria-pressed="${f.m === fq.m}">${f.m === 1 ? "1 mese" : f.m === 12 ? "1 anno" : f.m + " mesi"}</button>`).join("")}</div></div>
-      <div class="grid2"><div class="field"><label for="abAmt">Tariffa ${fq.per} €</label><input id="abAmt" class="inp mono" inputmode="decimal" placeholder="0,00" value="${esc(x.amountStr)}"></div>
+      <div class="between"><div><h2 id="abTitle" style="font-size:17px;font-weight:600">${esc(x.name)}</h2><p class="muted sm">${x.fund ? `Scadenza del ${esc(fmtDate(x.oldRenew))} · registra il pagamento e aggiorna l'importo` : `Scaduto ${x.oldRenew === todayISO() ? "oggi" : "il " + esc(fmtDate(x.oldRenew))} · rinnovalo o interrompilo`}</p></div><button class="btn b-ghost b-icon b-sm" data-act="subs-close" aria-label="Chiudi">${ic("x")}</button></div>
+      <div class="field"><span class="lab">${x.fund ? "Prossimo periodo" : "Rinnova per"}</span><div class="togs" role="group" aria-label="Durata del rinnovo">${FREQS.filter(f => x.fund ? f.m > 1 : f.m !== 2).map(f => `<button class="tog" data-act="subs-freq" data-v="${f.m}" aria-pressed="${f.m === fq.m}">${f.m === 1 ? "1 mese" : f.m === 12 ? "1 anno" : f.m + " mesi"}</button>`).join("")}</div></div>
+      <div class="grid2"><div class="field"><label for="abAmt">${x.fund ? "Importo" : "Tariffa"} ${fq.per} €</label><input id="abAmt" class="inp mono" inputmode="decimal" placeholder="0,00" value="${esc(x.amountStr)}"></div>
         <div class="field"><label for="abDue">Nuova scadenza</label><input id="abDue" class="inp" type="date" value="${esc(x.renew || "")}"></div></div>
       <label class="row sm" style="gap:8px;cursor:pointer"><input type="checkbox" id="abPay" ${x.pay ? "checked" : ""}><span id="abPayL">Registra il pagamento di <b class="mono">${isFinite(amt) && amt > 0 ? eur(amt) : "—"}</b> con data di oggi</span></label>
-      <label class="row sm" style="gap:8px;cursor:pointer"><input type="checkbox" id="abAuto" ${x.auto ? "checked" : ""}>Da qui in poi si rinnova da solo, senza chiedere</label>
-      <p class="xs muted">${fq.m === 1 ? "Il pagamento va tra le spese degli abbonamenti di questo mese." : "Il pagamento esce dal fondo spese annuali, dove è stato accantonato."} Se interrompi, l'abbonamento sparisce dal budget dal mese prossimo; i pagamenti passati restano nei movimenti.</p>
-      <div class="dfoot"><button class="btn ${stop ? "b-destructive" : "b-dghost"}" data-act="subs-stop">${stop ? "Conferma interruzione" : "Interrompi"}</button><span class="grow"></span><button class="btn b-outline" data-act="subs-close">Più tardi</button><button class="btn b-default" data-act="subs-renew-save" id="abSave">Rinnova</button></div>`;
+      <label class="row sm" style="gap:8px;cursor:pointer"><input type="checkbox" id="abAuto" ${x.auto ? "checked" : ""}>${x.fund ? "Alle prossime scadenze non chiedere" : "Da qui in poi si rinnova da solo, senza chiedere"}</label>
+      <p class="xs muted">${x.fund ? "Il pagamento esce dal fondo spese annuali. Se la spesa non c'è più, eliminala: non verrà più accantonata. I pagamenti passati restano nei movimenti." : `${fq.m === 1 ? "Il pagamento va tra le spese degli abbonamenti di questo mese." : "Il pagamento esce dal fondo spese annuali, dove è stato accantonato."} Se interrompi, l'abbonamento sparisce dal budget dal mese prossimo; i pagamenti passati restano nei movimenti.`}</p>
+      <div class="dfoot"><button class="btn ${stop ? "b-destructive" : "b-dghost"}" data-act="subs-stop">${stop ? (x.fund ? "Conferma eliminazione" : "Conferma interruzione") : (x.fund ? "Elimina voce" : "Interrompi")}</button><span class="grow"></span><button class="btn b-outline" data-act="subs-close">Più tardi</button><button class="btn b-default" data-act="subs-renew-save" id="abSave">${x.fund ? "Aggiorna" : "Rinnova"}</button></div>`;
     return;
   }
   el.innerHTML = `<div class="handle-zone"><div class="handle"></div></div>
     <div class="between"><div class="row"><button class="btn b-ghost b-icon b-sm" data-act="subs-back" aria-label="Torna all'elenco"><svg class="i" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg></button><h2 id="abTitle" style="font-size:17px;font-weight:600">${x.isNew ? "Nuovo abbonamento" : "Modifica abbonamento"}</h2></div><button class="btn b-ghost b-icon b-sm" data-act="subs-close" aria-label="Chiudi">${ic("x")}</button></div>
     <div class="field"><label for="abName">Nome</label><input id="abName" class="inp" placeholder="es. Spotify" value="${esc(x.name)}"></div>
-    <div class="field"><span class="lab">Durata</span><div class="togs" role="group" aria-label="Durata">${FREQS.map(f => `<button class="tog" data-act="subs-freq" data-v="${f.m}" aria-pressed="${f.m === fq.m}">${f.n}</button>`).join("")}</div></div>
+    <div class="field"><span class="lab">Durata</span><div class="togs" role="group" aria-label="Durata">${FREQS.filter(f => f.m !== 2).map(f => `<button class="tog" data-act="subs-freq" data-v="${f.m}" aria-pressed="${f.m === fq.m}">${f.n}</button>`).join("")}</div></div>
     <div class="grid2"><div class="field"><label for="abAmt">Importo ${fq.per} €</label><input id="abAmt" class="inp mono" inputmode="decimal" placeholder="0,00" value="${esc(x.amountStr)}"></div>
       <div class="field"><label for="abDue">Prossima scadenza</label><input id="abDue" class="inp" type="date" value="${esc(x.renew || "")}"></div></div>
     <label class="row sm" style="gap:8px;cursor:pointer"><input type="checkbox" id="abAuto" ${x.auto ? "checked" : ""}>Si rinnova da solo</label>
@@ -1781,7 +1784,7 @@ function putSub(cfg, x, name, amount) {
   const prevA = cfg.annual.find(y => y.id === x.id), existed = !!prevA || cfg.recurring.some(y => y.id === x.id);
   cfg.recurring = cfg.recurring.filter(y => y.id !== x.id); cfg.annual = cfg.annual.filter(y => y.id !== x.id);
   const renew = /^\d{4}-\d{2}-\d{2}$/.test(x.renew || "") ? x.renew : null, months = freqOf(x.freq).m, auto = !!x.auto;
-  if (months > 1) cfg.annual.push({...(prevA || {share:100}), id:x.id, name, amount:r2(amount), months, renew, auto, due:renew ? Number(renew.slice(5, 7)) : (prevA?.due ?? null), sub:true});
+  if (months > 1) cfg.annual.push({...(prevA || {share:100}), id:x.id, name, amount:r2(amount), months, renew, auto, due:renew ? Number(renew.slice(5, 7)) : (prevA?.due ?? null), sub:prevA ? !!prevA.sub : true});
   else cfg.recurring.push({id:x.id, name, amount:r2(amount), cat:SUBCAT, auto, ...(renew ? {renew} : {})});
   return existed;
 }
@@ -1808,7 +1811,7 @@ async function stopSub() {
 }
 function renewState(id, stop) {
   const it = subById(id); if (!it) return null; const months = it.cat === SUBCAT ? 1 : perMonths(it);
-  return {mode:"renew", confirmStop:!!stop, item:{id:it.id, name:it.name, amountStr:String(it.amount).replace(".", ","), freq:months, oldRenew:it.renew, renew:addMonthsISO(it.renew, months), auto:false, pay:true}};
+  return {mode:"renew", confirmStop:!!stop, item:{fund:it.cat !== SUBCAT && !it.sub, id:it.id, name:it.name, amountStr:String(it.amount).replace(".", ","), freq:months, oldRenew:it.renew, renew:addMonthsISO(it.renew, months), auto:false, pay:true}};
 }
 async function saveSub() {
   readSubInputs(); const x = subState.item; const name = x.name.trim(), amount = parseAmt(x.amountStr);
@@ -1895,8 +1898,10 @@ document.addEventListener("click", async e => {
   if (act === "subs-movs") { closeSubs(); S.catFilter = SUBCAT; S.tagFilter = ""; S.unsubTag?.(); S.tagView = ""; S.tagTx = null; S.view = "movimenti"; window.scrollTo(0, 0); render(); return; }
   if (act === "fund-close") return closeFund();
   if (act === "fund-back") { fundState = {mode:"list"}; return drawFund(); }
-  if (act === "fund-new") { fundState = {mode:"edit", item:{id:"ann_" + Math.random().toString(36).slice(2, 8), isNew:true, name:"", amountStr:"", shareStr:"100", due:""}}; return drawFund(); }
-  if (act === "fund-edit") { const x = (S.cfg.annual || []).find(y => y.id === a.dataset.id); if (!x) return; fundState = {mode:"edit", item:{id:x.id, name:x.name, amountStr:String(x.amount ?? 0).replace(".", ","), shareStr:String(x.share ?? 100), due:x.due || ""}}; return drawFund(); }
+  if (act === "fund-new") { fundState = {mode:"edit", item:{id:"ann_" + Math.random().toString(36).slice(2, 8), isNew:true, name:"", amountStr:"", shareStr:"100", months:12, renew:"", ask:true}}; return drawFund(); }
+  if (act === "fund-edit") { const x = (S.cfg.annual || []).find(y => y.id === a.dataset.id); if (!x) return; if (isExpired(x)) { closeFund(); const st = renewState(x.id); if (st) openSubs(st); return; } fundState = {mode:"edit", item:{id:x.id, name:x.name, amountStr:String(x.amount ?? 0).replace(".", ","), shareStr:String(x.share ?? 100), months:perMonths(x), renew:x.renew || nextRenew(x) || "", due:x.due || "", ask:!autoOf(x)}}; return drawFund(); }
+  if (act === "fund-open-edit") { openFund(); const x = (S.cfg.annual || []).find(y => y.id === a.dataset.id); if (x) document.querySelector(`#fund [data-act="fund-edit"][data-id="${a.dataset.id}"]`)?.click(); return; }
+  if (act === "fund-freq") { readFundInputs(); fundState.item.months = Number(a.dataset.v); return drawFund(); }
   if (act === "fund-save") return saveFundItem();
   if (act === "fund-del") return deleteFundItem();
   if (act === "s-save") return saveSheet();
@@ -1998,7 +2003,7 @@ document.addEventListener("input", e => {
     GROUPS.forEach(g => { const gs = document.querySelector(`[data-gsub="${g.id}"]`); if (gs) gs.textContent = eur0(budCatsFor(S.budgetDraft).filter(c => c.group === g.id).reduce((a, c) => a + budOf(c, S.budgetDraft), 0)); });
   }
   if (t.closest?.("#settings") || t.closest?.("#entrate .tw")) S.settingsDirty = true;
-  if ((t.id === "fAmt" || t.id === "fShare") && $("#fMonthly")) { const v = parseAmt($("#fAmt").value || "0"), sh = $("#fShare").value === "" ? 100 : Number($("#fShare").value); $("#fMonthly").textContent = eur((isFinite(v) ? v : 0) * ((isFinite(sh) ? sh : 100) / 100) / 12); }
+  if ((t.id === "fAmt" || t.id === "fShare") && $("#fMonthly")) { const v = parseAmt($("#fAmt").value || "0"), sh = $("#fShare").value === "" ? 100 : Number($("#fShare").value); $("#fMonthly").textContent = eur((isFinite(v) ? v : 0) * ((isFinite(sh) ? sh : 100) / 100) / (Number(fundState?.item?.months) || 12)); }
   if ((t.id === "abAmt" || t.id === "abDue" || t.id === "abAuto") && subState?.item && $("#abHint")) { readSubInputs(); $("#abHint").innerHTML = subHint(subState.item); }
   if (t.id === "abAmt" && subState?.mode === "renew" && $("#abPayL")) { const v = parseAmt(t.value); $("#abPayL b").textContent = isFinite(v) && v > 0 ? eur(v) : "—"; }
   if (t.id === "sAmt" && sheetState?.from && $("#sFrom")) { sheetState.amountStr = t.value; $("#sFrom").innerHTML = fromHint(sheetState); }
