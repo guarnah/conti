@@ -455,7 +455,7 @@ const ICONS = {
   piggy:'<path d="M11 17h3v2a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1v-3a3.16 3.16 0 0 0 2-2h1a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1h-1a5 5 0 0 0-2-4V3a4 4 0 0 0-3.2 1.6l-.3.4H11a6 6 0 0 0-6 6v1a5 5 0 0 0 2 4v3a1 1 0 0 0 1 1h2a1 1 0 0 0 1-1z"/><path d="M16 10h.01M2 8v1a2 2 0 0 0 2 2h1"/>'
 };
 const ic = (n, cls = "") => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[n] || ""}</svg>`;
-const TABS = [{id:"mese", n:"Mese", i:"dash"}, {id:"movimenti", n:"Movimenti", i:"list"}, {id:"entrate", n:"Entrate", i:"in"}, {id:"andamento", n:"Andamento", xs:"Grafici", i:"chart"}, {id:"budget", n:"Budget", i:"wallet"}, {id:"salvadanai", n:"Salvadanai", i:"piggy"}, {id:"altro", n:"Impostazioni", s:"Altro", i:"sliders"}];
+const TABS = [{id:"mese", n:"Mese", i:"dash"}, {id:"movimenti", n:"Movimenti", i:"list"}, {id:"entrate", n:"Entrate", i:"in"}, {id:"andamento", n:"Andamento", xs:"Grafici", i:"chart"}, {id:"budget", n:"Budget", i:"wallet"}, {id:"salvadanai", n:"Patrimonio", i:"piggy"}, {id:"altro", n:"Impostazioni", s:"Altro", i:"sliders"}];
 
 /* ---------- utilità ---------- */
 const $ = (s, r = document) => r.querySelector(s);
@@ -484,7 +484,7 @@ const GROUPS = [{id:"ess", name:"Essenziali", d:"Spese di base"}, {id:"ext", nam
 
 /* ---------- stato ---------- */
 const S = { db:null, cfg:null, cfgLoaded:false, month:curMonth(), tx:[], txLoaded:false, budget:null, budgetLoaded:false, prevBudget:null,
-  fundTx:[], incTx:[], expTx:[], taxTx:[], view:"mese", unsubTx:null, unsubBud:null, trendCache:null, tagFilter:"", catFilter:"", tagAll:null, budgetDraft:null, settingsDirty:false, trendCat:"" };
+  fundTx:[], incTx:[], expTx:[], taxTx:[], nw:[], view:"mese", unsubTx:null, unsubBud:null, trendCache:null, tagFilter:"", catFilter:"", tagAll:null, budgetDraft:null, settingsDirty:false, trendCat:"" };
 
 const toast = msg => { document.querySelectorAll(".toast").forEach(t => t.remove()); const t = document.createElement("div"); t.className = "toast"; t.setAttribute("role", "status"); t.innerHTML = ic("check") + esc(msg); document.body.appendChild(t); setTimeout(() => t.remove(), 2400); };
 const setStatus = (s, k = "ok") => { const el = $("#status"); el.textContent = s; el.dataset.s = k; };
@@ -645,6 +645,7 @@ async function boot() {
   }, e => fail(e));
   db.collection("tx").where("kind", "==", "inc").onSnapshot(snap => { S.incTx = snap.docs.map(d => ({id:d.id, ...d.data()})); S.trendCache = null; render(); }, e => fail(e));
   db.collection("tx").where("cat", "==", "fondo").onSnapshot(snap => { S.fundTx = snap.docs.map(d => ({id:d.id, ...d.data()})); render(); }, e => fail(e));
+  db.collection("nw").onSnapshot(snap => { S.nw = snap.docs.map(d => d.data()).sort((a, b) => a.month.localeCompare(b.month)); render(); }, e => fail(e));
   db.collection("tx").where("kind", "==", "tax").onSnapshot(snap => { S.taxTx = snap.docs.map(d => ({id:d.id, ...d.data()})); render(); }, e => fail(e));
   db.collection("tx").where("kind", "==", "exp").onSnapshot(snap => { S.expTx = snap.docs.map(d => ({id:d.id, ...d.data()})); render(); }, e => fail(e));
   subscribeMonth();
@@ -890,11 +891,60 @@ function potsMini() {
   return `<div class="card wide-only"><div class="card-h"><div><div class="card-t row"><span class="gd g-ris"></span>Salvadanai</div><div class="card-d">Totale da parte <span class="mono">${eur0(tot)}</span></div></div><button class="btn b-ghost b-sm" data-tab="salvadanai">Apri</button></div><div class="card-c flush">` +
     pl.map(p => { const g = goalInfo(p.c, p); return `<button class="crow" data-act="open-pot" data-id="${esc(p.c.id)}"><div class="between"><span class="nm">${esc(p.c.name)}</span><span class="vl mono"><b style="color:${p.avail < 0 ? "var(--destructive)" : "var(--foreground)"}">${eur0(p.avail)}</b>${g ? ` / ${eur0(g.goal)}` : ""}</span></div>${g ? progHtml(p.avail, g.goal) : ""}</button>`; }).join(`<div class="sep"></div>`) + `</div></div>`;
 }
+/* ---------- patrimonio: saldi dei conti a fine mese ---------- */
+const nwTotal = snap => Object.values(snap?.balances || {}).reduce((a, v) => a + (Number(v) || 0), 0);
+function nwCard() {
+  const accs = S.cfg.accounts || [], last = S.nw.at(-1), prev = S.nw.at(-2);
+  const head = `<div class="between" style="align-items:flex-end;gap:12px"><div><h1 class="pt">Patrimonio</h1><p class="muted sm">I tuoi conti e quanto hai da parte</p></div><button class="btn b-default b-sm" data-act="nw-edit" style="flex:none">${ic("check")}Aggiorna saldi</button></div>`;
+  if (!last) return head + `<div class="card empty">${ic("wallet")}<div>Inserisci i saldi dei tuoi conti (conto corrente, conti deposito, investimenti, fondo pensione): una volta al mese basta un minuto, e qui vedi come cresce il totale.</div><button class="btn b-default b-sm" data-act="nw-edit" style="margin-top:6px">${ic("plus")}Inserisci i saldi</button></div>`;
+  const tot = nwTotal(last), d = prev ? tot - nwTotal(prev) : null, tax = S.cfg.tax ? taxStatus().bal : 0;
+  const rows = S.nw.slice(-12).map(x => ({label:mShort(x.month), v:nwTotal(x)}));
+  const ids = [...new Set([...accs.map(a => a.id), ...Object.keys(last.balances || {})])];
+  return head + `<div class="card hero"><div class="card-c stack" style="gap:14px">
+    <div class="between" style="align-items:flex-start;flex-wrap:wrap;gap:8px"><div><div class="lbl">Totale a ${esc(mLong(last.month))}</div><div class="big mono">${eur(tot)}</div></div>${d != null ? `<span class="badge ${d < 0 ? "bd-destructive" : "bd-success"}">${ic(d < 0 ? "down" : "up")}<span class="mono">${sgn(d)}</span> da ${esc(mShort(prev.month))}</span>` : ""}</div>
+    ${tax > 0 ? `<div class="between sm"><span class="muted">Senza la quota tasse (${eur0(tax)})</span><b class="mono">${eur(tot - tax)}</b></div>` : ""}
+    ${rows.length > 1 ? `<div class="chart">${svgBars(rows, [{k:"v", c:"var(--chart-3)", n:"Totale"}], 150)}</div>` : ""}
+  </div></div>
+  <div class="card"><div class="card-c flush">${ids.map(id => { const a = accs.find(x => x.id === id), v = Number(last.balances?.[id]) || 0, pv = prev ? Number(prev.balances?.[id]) || 0 : null;
+    return `<div class="trow" style="cursor:default;grid-template-columns:36px minmax(0,1fr) auto"><div class="ava g-ris">${ic("wallet")}</div><div class="grow"><div class="t1">${esc(a?.name || id)}</div>${a?.note ? `<div class="t2">${esc(a.note)}</div>` : ""}</div><div style="text-align:right"><div class="am mono">${eur(v)}</div>${pv != null && Math.abs(v - pv) > 0.5 ? `<div class="xs mono" style="color:${v < pv ? "var(--destructive)" : "var(--success)"}">${sgn(v - pv)}</div>` : ""}</div></div>`; }).join("")}</div></div>`;
+}
+let nwState = null;
+function openNw() {
+  const last = S.nw.at(-1), accs = S.cfg.accounts?.length ? S.cfg.accounts : [{id:"acc_" + Math.random().toString(36).slice(2, 7), name:"", note:""}];
+  nwState = {month:curMonth(), rows:accs.map(a => ({id:a.id, name:a.name, note:a.note || "", v:String(last?.balances?.[a.id] ?? "").replace(".", ",")}))};
+  const bg = document.createElement("div"); bg.className = "ovl"; bg.id = "nwBg";
+  bg.innerHTML = `<div class="drawer" role="dialog" aria-modal="true" aria-labelledby="nwTitle" id="nwd"></div>`;
+  document.body.appendChild(bg); document.body.style.overflow = "hidden";
+  bg.addEventListener("click", e => { if (e.target === bg) closeNw(); });
+  drawNw(); enableSwipeClose(bg, closeNw);
+}
+function closeNw() { closeOverlay("nwBg"); nwState = null; }
+function readNw() { if (!nwState) return; document.querySelectorAll("#nwd [data-nw]").forEach(r => { const x = nwState.rows[Number(r.dataset.nw)]; if (!x) return; x.name = r.querySelector("[data-f=name]").value; x.note = r.querySelector("[data-f=note]").value; x.v = r.querySelector("[data-f=v]").value; }); const m = $("#nwMonth"); if (m) nwState.month = m.value || nwState.month; }
+function drawNw() {
+  const el = $("#nwd"); if (!el || !nwState) return;
+  const tot = nwState.rows.reduce((a, x) => a + (parseAmt(x.v) || 0), 0);
+  el.innerHTML = `<div class="handle-zone"><div class="handle"></div></div>
+    <div class="between"><div><h2 id="nwTitle" style="font-size:17px;font-weight:600">Saldi dei conti</h2><p class="muted sm">Totale <span class="mono" id="nwTot">${eur(tot)}</span></p></div><button class="btn b-ghost b-icon b-sm" data-act="nw-close" aria-label="Chiudi">${ic("x")}</button></div>
+    <div class="field"><label for="nwMonth">Mese</label><input id="nwMonth" class="inp" type="month" value="${esc(nwState.month)}"></div>
+    <div class="stack" style="gap:10px">${nwState.rows.map((x, i) => `<div class="card card-c stack" data-nw="${i}" style="gap:8px;padding:12px"><div class="grid2"><input class="inp" data-f="name" placeholder="Nome del conto" value="${esc(x.name)}" aria-label="Nome del conto"><input class="inp mono" data-f="v" inputmode="decimal" placeholder="Saldo €" value="${esc(x.v)}" aria-label="Saldo"></div><div class="row" style="gap:8px"><input class="inp grow" data-f="note" placeholder="A cosa serve (facoltativo)" value="${esc(x.note)}" aria-label="Nota"><button class="btn b-dghost b-icon b-sm" data-act="nw-del" data-i="${i}" aria-label="Togli conto">${ic("trash")}</button></div></div>`).join("")}</div>
+    <div><button class="btn b-outline b-sm" data-act="nw-add">${ic("plus")}Aggiungi conto</button></div>
+    <p class="xs muted">Scrivi il saldo di ogni conto alla fine del mese. Se lo stesso mese è già salvato, viene aggiornato.</p>
+    <div class="dfoot"><span class="grow"></span><button class="btn b-outline" data-act="nw-close">Annulla</button><button class="btn b-default" data-act="nw-save" id="nwSave">Salva</button></div>`;
+}
+async function saveNw() {
+  readNw(); const rows = nwState.rows.filter(x => x.name.trim()); if (!rows.length) return toast("Aggiungi almeno un conto");
+  if (!/^\d{4}-\d{2}$/.test(nwState.month)) return toast("Scegli il mese");
+  const cfg = structuredClone(S.cfg); cfg.accounts = rows.map(x => ({id:x.id, name:x.name.trim(), note:x.note.trim()}));
+  const balances = {}; rows.forEach(x => balances[x.id] = r2(parseAmt(x.v) || 0));
+  $("#nwSave").disabled = true;
+  try { await S.db.doc("config/main").set(cfg); S.cfg = cfg; await S.db.doc("nw/" + nwState.month).set({month:nwState.month, balances, saved:Date.now()}); closeNw(); render(); toast("Saldi salvati"); }
+  catch (e) { fail(e); const b = $("#nwSave"); if (b) b.disabled = false; }
+}
 function viewSalvadanai() {
   if (S.potView) return viewPot();
   const pl = pots().map(c => ({c, ...potStatus(c.id)}));
   const tot = pl.reduce((a, p) => a + p.avail, 0);
-  let h = `<div class="between" style="align-items:flex-end;gap:12px"><div><h1 class="pt">Salvadanai</h1><p class="muted sm">Quanto hai da parte. Una spesa pagata da un salvadanaio non pesa sul budget del mese.</p></div><button class="btn b-default b-sm" data-act="pot-new" style="flex:none">${ic("plus")}Nuovo</button></div>`;
+  let h = nwCard() + `<div class="between" style="align-items:flex-end;gap:12px;margin-top:12px"><div><h2 class="pt" style="font-size:20px">Salvadanai</h2><p class="muted sm">Quanto hai da parte. Una spesa pagata da un salvadanaio non pesa sul budget del mese.</p></div><button class="btn b-default b-sm" data-act="pot-new" style="flex:none">${ic("plus")}Nuovo</button></div>`;
   if (!pl.length) return h + `<div class="card empty">${ic("piggy")}<div>Nessun salvadanaio. Creane uno per un viaggio, la casa o una spesa grossa.</div><button class="btn b-default b-sm" data-act="pot-new" style="margin-top:6px">${ic("plus")}Nuovo salvadanaio</button></div>`;
   h += `<div class="card hero"><div class="card-c stack" style="gap:14px"><div><div class="lbl">Totale da parte</div><div class="big mono">${eur(tot)}</div><div class="muted sm" style="margin-top:4px">${pl.length} ${pl.length === 1 ? "salvadanaio" : "salvadanai"}</div></div>
     ${tot > 0 ? `<div class="stack" style="gap:10px">${pl.filter(p => p.avail > 0).map(p => `<div class="stack" style="gap:5px"><div class="between sm"><span>${esc(p.c.name)}</span><span class="mono muted">${Math.round(p.avail / tot * 100)}%</span></div><div class="prog"><i style="width:${p.avail / tot * 100}%;background:var(--chart-3)"></i></div></div>`).join("")}</div>` : ""}</div></div>`;
@@ -1754,6 +1804,11 @@ document.addEventListener("click", async e => {
   if (act === "tax-undo") { if (S.taxUndo !== a.dataset.id) { S.taxUndo = a.dataset.id; render(); return; }
     const t = S.taxTx.find(x => x.id === a.dataset.id); S.taxUndo = null; if (!t) return;
     try { await S.db.doc("tx/" + t.id).delete(); if (t.dlId) { const cfg = structuredClone(S.cfg); const d = cfg.tax?.deadlines?.find(x => x.id === t.dlId); if (d) { d.paid = false; await S.db.doc("config/main").set(cfg); S.cfg = cfg; } } render(); toast("Pagamento annullato"); } catch (er) { fail(er); } return; }
+  if (act === "nw-edit") return openNw();
+  if (act === "nw-close") return closeNw();
+  if (act === "nw-save") return saveNw();
+  if (act === "nw-add") { readNw(); nwState.rows.push({id:"acc_" + Math.random().toString(36).slice(2, 7), name:"", note:"", v:""}); drawNw(); return; }
+  if (act === "nw-del") { readNw(); nwState.rows.splice(Number(a.dataset.i), 1); drawNw(); return; }
   if (act === "rec-toggle") { S.recOpen = !S.recOpen; render(); return; }
   if (act === "goto-budget") { S.view = "budget"; window.scrollTo(0, 0); render(); return; }
   if (act === "filter-cat") { S.catFilter = a.dataset.id; S.tagFilter = ""; S.unsubTag?.(); S.tagView = ""; S.tagTx = null; S.view = "movimenti"; window.scrollTo(0, 0); render(); return; }
@@ -1799,6 +1854,7 @@ document.addEventListener("click", async e => {
 document.addEventListener("input", e => {
   const t = e.target;
   if (t.id === "msearch") { S.q = t.value; render(); return; }
+  if (t.closest?.("#nwd") && t.dataset.f === "v") { readNw(); const el = $("#nwTot"); if (el) el.textContent = eur(nwState.rows.reduce((a, x) => a + (parseAmt(x.v) || 0), 0)); }
   if (t.id === "sNote" && sheetState && sheetState.kind !== "inc" && !sheetState.id && (!sheetState.cat || sheetState.catAuto)) {
     const r = ruleFor(t.value), pos = t.selectionStart;
     if (r && r.cat !== sheetState.cat) { readSheetInputs(); sheetState.cat = r.cat; sheetState.catAuto = r.why; drawSheet(); const n = $("#sNote"); if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch {} } }
@@ -1837,6 +1893,7 @@ document.addEventListener("change", e => {
     if (Math.abs(dx) > 70 && Math.abs(dy) < 45 && Date.now() - t0 < 600) (dx < 0 ? $("#nextM") : $("#prevM")).click();
     x0 = null; }, {passive:true}); })();
 document.addEventListener("keydown", e => {
+  if (nwState) { if (e.key === "Escape") closeNw(); return; }
   if (S.taxEdit) { if (e.key === "Escape") closeTaxEdit(); if (e.key === "Enter" && e.target.tagName === "INPUT") { e.preventDefault(); saveTax(false); } return; }
   if (potState) { if (e.key === "Escape") closePotEdit(); if (e.key === "Enter" && e.target.tagName === "INPUT" && e.target.type !== "checkbox") { e.preventDefault(); savePot(); } return; }
   if (subState) { if (e.key === "Escape") closeSubs(); if (e.key === "Enter" && e.target.tagName === "INPUT" && subState.mode === "edit") { e.preventDefault(); saveSub(); } return; }
