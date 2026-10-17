@@ -253,6 +253,21 @@ body[data-view="salvadanai"] .hdr .month{visibility:hidden}
 
 /* table */
 .tw{overflow-x:auto}
+.mlbl{display:none}
+@media (max-width:700px){
+  table.t-recurring thead{display:none}
+  table.t-recurring,table.t-recurring tbody{display:block}
+  table.t-recurring tr{display:grid;grid-template-columns:minmax(0,1fr) 92px 40px;gap:6px 8px;padding:12px 0;border-bottom:1px solid var(--border)}
+  table.t-recurring td{padding:0!important;border:0!important;min-width:0}
+  table.t-recurring td .inp{width:100%!important;min-width:0!important;box-sizing:border-box}
+  table.t-recurring td:nth-child(1){grid-column:1;grid-row:1}
+  table.t-recurring td:nth-child(2){grid-column:2;grid-row:1}
+  table.t-recurring td:nth-child(6){grid-column:3;grid-row:1;align-self:center}
+  table.t-recurring td:nth-child(3){grid-column:1/4;grid-row:2}
+  table.t-recurring .rc-f{grid-column:1;grid-row:3}
+  table.t-recurring .rc-t{grid-column:2/4;grid-row:3}
+  table.t-recurring .mlbl{display:block;font-size:11px;opacity:.7;margin:0 0 2px 2px}
+}
 table{width:100%;border-collapse:collapse;font-size:13.5px}
 th{height:38px;padding:0 8px;text-align:left;font-weight:500;color:var(--muted-foreground);white-space:nowrap;border-bottom:1px solid var(--border)}
 td{padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:middle}
@@ -1351,12 +1366,12 @@ const ROW = {
   hist: x => `<td><input class="inp" type="month" style="width:170px" data-f="m" value="${esc(x.m || "")}" aria-label="Mese"></td><td class="r"><input class="inp num" style="width:100px" data-f="g" inputmode="decimal" value="${esc(String(x.g ?? 0).replace(".", ","))}" aria-label="Lordo"></td><td class="r"><input class="inp num" style="width:100px" data-f="v" inputmode="decimal" value="${esc(String(x.v ?? 0).replace(".", ","))}" aria-label="Netto"></td><td>${delBtn}</td>`,
   annual: (a, paid) => `<td><input class="inp" style="min-width:140px" data-f="name" placeholder="Nuova voce" value="${esc(a.name || "")}" aria-label="Voce"></td><td class="r"><input class="inp num" style="width:92px" data-f="amount" inputmode="decimal" value="${esc(String(a.amount ?? 0).replace(".", ","))}" aria-label="Importo annuo"></td><td class="r"><input class="inp num" style="width:62px" data-f="share" inputmode="numeric" value="${esc(a.share ?? 100)}" aria-label="Tua quota percentuale"></td><td><select class="inp" style="width:84px" data-f="due" aria-label="Mese di scadenza">${monthOpts(a.due)}</select></td><td class="r mono muted" style="white-space:nowrap">${a.name ? eur((Number(a.amount) || 0) * ((a.share ?? 100) / 100) / 12) : ""}${paid ? `<br><span class="badge bd-success">pagato ${eur0(paid)}</span>` : ""}</td><td>${delBtn}</td>`,
   rules: x => `<td><input class="inp" style="min-width:160px" data-f="match" placeholder="es. esselunga" value="${esc(x.match || "")}" aria-label="Testo nella nota"></td><td><select class="inp" style="min-width:170px" data-f="cat" aria-label="Categoria">${catOpts(x.cat)}</select></td><td>${delBtn}</td>`,
-  recurring: x => `<td><input class="inp" style="min-width:140px" data-f="name" placeholder="Nuova ricorrente" value="${esc(x.name || "")}" aria-label="Voce"></td><td class="r"><input class="inp num" style="width:88px" data-f="amount" inputmode="decimal" value="${esc(String(x.amount ?? 0).replace(".", ","))}" aria-label="Importo"></td><td><select class="inp" style="min-width:150px" data-f="cat" aria-label="Categoria">${catOpts(x.cat)}</select></td><td><input class="inp" type="month" style="width:138px" data-f="from" value="${esc(x.from || "")}" aria-label="Dal mese" title="Vuoto = da sempre"></td><td><input class="inp" type="month" style="width:138px" data-f="to" value="${esc(x.to || "")}" aria-label="Fino al mese" title="Vuoto = senza fine"></td><td>${delBtn}</td>`,
+  recurring: x => `<td><input class="inp" style="min-width:140px" data-f="name" placeholder="Nuova ricorrente" value="${esc(x.name || "")}" aria-label="Voce"></td><td class="r"><input class="inp num" style="width:88px" data-f="amount" inputmode="decimal" value="${esc(String(x.amount ?? 0).replace(".", ","))}" aria-label="Importo"></td><td><select class="inp" style="min-width:150px" data-f="cat" aria-label="Categoria">${catOpts(x.cat)}</select></td><td class="rc-f"><span class="mlbl">Dal mese</span><input class="inp" type="month" style="width:138px" data-f="from" value="${esc(x.from || "")}" aria-label="Dal mese" title="Vuoto = da sempre"></td><td class="rc-t"><span class="mlbl">Fino al mese</span><input class="inp" type="month" style="width:138px" data-f="to" value="${esc(x.to || "")}" aria-label="Fino al mese" title="Vuoto = senza fine"></td><td>${delBtn}</td>`,
   sources: x => `<td><input class="inp" style="min-width:150px" data-f="name" placeholder="Nuova fonte" value="${esc(x.name || "")}" aria-label="Fonte"></td><td class="r"><input class="inp num" style="width:66px" data-f="pct" inputmode="numeric" value="${esc(x.pct ?? 80)}" aria-label="Percentuale netta"></td><td class="r"><input class="inp num" style="width:100px" data-f="fixed" inputmode="decimal" placeholder="—" value="${esc(x.fixed ? String(x.fixed).replace(".", ",") : "")}" aria-label="Importo fisso"></td><td class="r"><input class="inp num" style="width:100px" data-f="newAmt" inputmode="decimal" placeholder="—" value="${esc(lastChange(x) ? String(x.fixedChanges[lastChange(x)]).replace(".", ",") : "")}" aria-label="Nuovo importo fisso"></td><td><input class="inp" type="month" style="width:150px" data-f="from" value="${esc(lastChange(x))}" aria-label="Nuovo importo dal mese"></td><td>${delBtn}</td>`,
   categories: x => `<td><input class="inp" style="min-width:170px" data-f="name" placeholder="Nuova categoria" value="${esc(x.name || "")}" aria-label="Nome"></td><td><select class="inp" style="width:auto" data-f="group" aria-label="Area">${GROUPS.map(g => `<option value="${g.id}" ${g.id === x.group ? "selected" : ""}>${g.name}</option>`).join("")}</select></td><td><input type="checkbox" data-f="fixed" ${x.fixed ? "checked" : ""} aria-label="Spesa fissa"></td><td class="r"><input class="inp num" style="width:80px" data-f="defaultBudget" inputmode="decimal" value="${esc(x.defaultBudget || 0)}" aria-label="Budget base"></td><td><input type="checkbox" data-f="active" ${x.hidden ? "" : "checked"} aria-label="Attiva"></td>`
 };
 const tblCard = (kind, title, desc, heads, items, rowFn, addLbl, foot = "") => `<div class="card"><div class="card-h"><div><div class="card-t">${title}</div><div class="card-d">${desc}</div></div></div>
-  <div class="card-c tw" style="padding-top:8px"><table><thead><tr>${heads.map(h => `<th class="${h[1] || ""}">${h[0]}</th>`).join("")}</tr></thead><tbody>${items.map(x => `<tr data-row="${kind}" data-id="${esc(x.id)}">${rowFn(x)}</tr>`).join("")}</tbody></table>
+  <div class="card-c tw" style="padding-top:8px"><table class="t-${kind}"><thead><tr>${heads.map(h => `<th class="${h[1] || ""}">${h[0]}</th>`).join("")}</tr></thead><tbody>${items.map(x => `<tr data-row="${kind}" data-id="${esc(x.id)}">${rowFn(x)}</tr>`).join("")}</tbody></table>
   <div style="margin-top:10px"><button class="btn b-outline b-sm" data-act="add-row" data-kind="${kind}">${ic("plus")}${addLbl}</button></div>${foot}</div></div>`;
 function viewAltro() {
   const c = S.cfg; const yr = curMonth().slice(0, 4);
