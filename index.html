@@ -255,6 +255,12 @@ h1.pt{font-size:22px;font-weight:600;letter-spacing:-.02em}
   .toast{bottom:28px}
   .stickybar{bottom:0}
 }
+/* Mese su schermo largo: Essenziali, Extra e Risparmio su tre colonne */
+.gcols{display:flex;flex-direction:column;gap:16px}
+@media (min-width:1100px){
+  .hdr .in,body[data-view="mese"] .wrap{max-width:1240px}
+  .gcols{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:start}
+}
 @media (max-width:420px){.hero .big{font-size:34px}.stat{padding:10px 11px}.stat .v{font-size:15px}.card-h{padding:16px 16px 0}.card-c{padding:14px 16px 16px}}
 @media (prefers-reduced-motion:no-preference){.drawer{animation:dIn .2s cubic-bezier(.32,.72,0,1)}@keyframes dIn{from{transform:translateY(24px);opacity:.5}}.toast{animation:tIn .2s ease-out}@keyframes tIn{from{transform:translate(-50%,8px);opacity:0}}}
 </style>
@@ -650,6 +656,7 @@ function viewMese() {
         const grp = rs.length ? `<div class="trow" style="cursor:default;grid-template-columns:36px minmax(0,1fr) auto auto"><div class="ava g-ext">${ic("repeat")}</div><button class="grow" data-act="open-subs" style="all:unset;cursor:pointer;min-width:0"><div class="t1">Abbonamenti</div><div class="t2">${esc(rs.map(x => x.name).join(", "))}</div></button><div class="am mono">${eur(rs.reduce((a, x) => a + (Number(x.amount) || 0), 0))}</div><button class="btn b-outline b-sm" data-act="rec-subs">Registra</button></div>` : "";
         return other.map(x => `<div class="trow" style="cursor:default;grid-template-columns:36px minmax(0,1fr) auto auto"><div class="ava g-${catById(x.cat)?.group || "ess"}">${ic("repeat")}</div><div class="grow"><div class="t1">${esc(x.name)}</div><div class="t2">${esc(catById(x.cat)?.name || "")}</div></div><div class="am mono">${eur(x.amount)}</div><button class="btn b-outline b-sm" data-act="rec-one" data-id="${esc(x.id)}">Registra</button></div>`).join("") + grp; })() + `</div></div>`;
   }
+  h += `<div class="gcols">`;
   for (const g of GROUPS) {
     const rows = r.rows.filter(x => x.c.group === g.id && (x.b > 0 || x.s > 0));
     const accRow = g.id === "ess" && (S.cfg.annual || []).length;
@@ -669,6 +676,7 @@ function viewMese() {
     }).join(`<div class="sep"></div>`);
     h += `</div></div>`;
   }
+  h += `</div>`;
   if ((S.cfg.annual || []).length) {
     const f = fundStatus();
     h += `<div class="card"><div class="card-h"><div><div class="card-t row"><span class="gd g-fondo"></span>Fondo spese annuali</div><div class="card-d">Accantoni <span class="mono">${eur(monthlyAccrualAll())}</span> al mese (abbonamenti annuali inclusi), già conteggiati nelle uscite</div></div><span class="muted">${ic("piggy")}</span></div>
