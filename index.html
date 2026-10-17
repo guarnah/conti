@@ -155,6 +155,13 @@ svg.i{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-widt
 .cr2 .prog{height:5px}
 .cr2 .lft{font-family:var(--font-sans);font-size:11.5px;margin-right:8px;color:var(--muted-foreground)}
 .recbar .card-c{padding-block:12px}
+.msearch{position:relative;display:flex;align-items:center}
+.msearch>svg{position:absolute;left:11px;width:16px;height:16px;color:var(--muted-foreground);pointer-events:none}
+.msearch .inp{padding-left:34px;padding-right:38px}
+.msearch .btn{position:absolute;right:4px}
+.stackbar{display:flex;gap:2px;height:10px;border-radius:999px;overflow:hidden}
+.stackbar i{display:block;height:100%}
+.mcols{display:flex;flex-direction:column;gap:16px}
 #settings .sec{display:none}
 #settings[data-sec="annual"] .sec[data-sec="annual"],#settings[data-sec="categories"] .sec[data-sec="categories"],#settings[data-sec="recurring"] .sec[data-sec="recurring"],#settings[data-sec="general"] .sec[data-sec="general"]{display:flex;flex-direction:column;gap:16px}
 .settabs{width:100%;overflow-x:auto;scrollbar-width:none}.settabs::-webkit-scrollbar{display:none}
@@ -291,6 +298,9 @@ details.hist summary{padding-bottom:18px}
   .hdr .in,body[data-view="mese"] .wrap,body[data-view="budget"] .wrap{max-width:1240px}
   .gcols{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:start}
   .wide-only{display:block}
+  body[data-view="movimenti"] .wrap{max-width:1240px}
+  .mcols{display:grid;grid-template-columns:minmax(0,1fr) 360px;align-items:start}
+  .mcols .mside{order:2;position:sticky;top:76px}.mcols .mmain{order:1}
   body[data-view="andamento"] .wrap{max-width:1240px}
   /* Andamento: grafico grande + proiezione, poi fatturato e categoria, poi la tabella */
   .tgrid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr))}
@@ -842,27 +852,54 @@ function viewPot() {
   }).join("") + `</div></div>`;
   return h;
 }
+function txMatches(t, q) {
+  const name = t.kind === "inc" ? (srcById(t.src)?.name || "") : t.cat === "fondo" ? (annualById(t.annId)?.name || "Spesa annuale") : (catById(t.cat)?.name || "");
+  const amt = String(t.amount ?? ""), amtIt = amt.replace(".", ",");
+  return [name, t.note, t.tag, amt, amtIt, t.from ? catById(t.from)?.name : ""].some(v => (v || "").toLowerCase().includes(q));
+}
+function movSummary(list) {
+  const exp = list.filter(t => t.kind !== "inc");
+  if (!exp.length) return "";
+  const grp = {ess:0, ext:0, ris:0, fondo:0}, byCat = {};
+  exp.forEach(t => { const v = Number(t.amount) || 0; const g = t.cat === "fondo" ? "fondo" : (catById(t.cat)?.group || "ess"); grp[g] += v; if (t.cat !== "fondo" && g !== "ris") byCat[t.cat] = (byCat[t.cat] || 0) + v; });
+  const tot = Object.values(grp).reduce((a, v) => a + v, 0);
+  const top = Object.entries(byCat).sort((a, b) => b[1] - a[1]).slice(0, 3);
+  const G = [["ess", "Essenziali", "var(--chart-2)"], ["ext", "Extra", "var(--chart-1)"], ["ris", "Risparmio", "var(--chart-3)"], ["fondo", "Spese annuali", "var(--muted-foreground)"]].filter(([k]) => grp[k] > 0);
+  return `<div class="card msum"><div class="card-h"><div><div class="card-t">Riepilogo di ${esc(mLong(S.month))}</div><div class="card-d">Uscite registrate <span class="mono">${eur(tot)}</span></div></div></div><div class="card-c stack" style="gap:12px">
+    <div class="stackbar">${G.map(([k, n, c]) => `<i style="width:${grp[k] / tot * 100}%;background:${c}" title="${esc(n)}: ${eur(grp[k])}"></i>`).join("")}</div>
+    <div class="stack" style="gap:6px">${G.map(([k, n, c]) => `<div class="between sm"><span class="row"><span class="gd" style="background:${c}"></span>${n}</span><span class="mono">${eur0(grp[k])} <span class="muted">· ${Math.round(grp[k] / tot * 100)}%</span></span></div>`).join("")}</div>
+    ${top.length ? `<div class="sep" style="margin:0"></div><div class="stack" style="gap:6px"><div class="xs muted">Dove hai speso di più</div>${top.map(([id, v], i) => `<button class="between sm" data-act="filter-cat" data-id="${esc(id)}" style="all:unset;display:flex;justify-content:space-between;cursor:pointer"><span>${i + 1}. ${esc(catById(id)?.name || id)}</span><span class="mono">${eur0(v)}</span></button>`).join("")}</div>` : ""}
+  </div></div>`;
+}
 function viewMovimenti() {
   if (S.tagView) return viewTag();
-  let list = S.tx;
+  const q = (S.q || "").trim().toLowerCase();
+  let list = q ? [...S.expTx, ...S.incTx].filter(t => txMatches(t, q)).sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.created || 0) - (a.created || 0)) : S.tx;
   if (S.catFilter) list = list.filter(t => S.catFilter === "_inc" ? t.kind === "inc" : t.cat === S.catFilter);
   const tot = list.reduce((a, t) => a + (t.kind === "inc" ? 0 : Number(t.amount) || 0), 0);
   const inc = list.reduce((a, t) => a + (t.kind === "inc" ? Number(t.amount) || 0 : 0), 0);
   const usedCats = [...new Set(S.tx.filter(t => t.kind !== "inc").map(t => t.cat))];
   const tags = allTags();
-  let h = `<div class="between" style="align-items:flex-end"><div><h1 class="pt">Movimenti</h1><p class="muted sm">${list.length} ${list.length === 1 ? "movimento" : "movimenti"} · uscite <span class="mono">${eur0(tot)}</span>${inc ? ` · entrate <span class="mono">${eur0(inc)}</span>` : ""}</p></div>
+  let h = `<div class="between" style="align-items:flex-end"><div><h1 class="pt">Movimenti</h1><p class="muted sm">${q ? `Ricerca in tutti i mesi · ` : ""}${list.length} ${list.length === 1 ? "movimento" : "movimenti"} · uscite <span class="mono">${eur0(tot)}</span>${inc ? ` · entrate <span class="mono">${eur0(inc)}</span>` : ""}</p></div>
     <button class="btn b-outline b-sm" data-act="export-month">${ic("dl")}CSV</button></div>
+    <div class="msearch"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="msearch" class="inp" type="search" placeholder="Cerca: nota, categoria, tag, importo" value="${esc(S.q || "")}" autocomplete="off" aria-label="Cerca nei movimenti">${q ? `<button class="btn b-ghost b-icon b-sm" data-act="q-clear" aria-label="Cancella ricerca">${ic("x")}</button>` : ""}</div>
     <div class="grid2">
     <select id="fcat" class="inp" aria-label="Filtra per categoria"><option value="">Tutte le categorie</option><option value="_inc" ${S.catFilter === "_inc" ? "selected" : ""}>Entrate</option>${usedCats.map(c => `<option value="${esc(c)}" ${S.catFilter === c ? "selected" : ""}>${esc(c === "fondo" ? "Spesa annuale" : catById(c)?.name || c)}</option>`).join("")}${S.catFilter && S.catFilter !== "_inc" && !usedCats.includes(S.catFilter) ? `<option value="${esc(S.catFilter)}" selected>${esc(catById(S.catFilter)?.name || S.catFilter)}</option>` : ""}</select>
     <select id="ftag" class="inp" aria-label="Apri un tag"><option value="">Vedi un tag…</option>${tags.map(t => `<option value="${esc(t)}">#${esc(t)}</option>`).join("")}</select></div>
     ${tags.length ? `<div class="togs">${tags.map(t => `<button class="tog" data-act="open-tag" data-tag="${esc(t)}">#${esc(t)}</button>`).join("")}</div>` : ""}`;
-  if (!list.length) { h += `<div class="card empty">${ic("list")}<div>${S.txLoaded ? (S.tx.length ? "Nessun movimento con questi filtri." : "Nessun movimento a " + esc(mLong(S.month)) + ". Tocca Aggiungi per inserire il primo.") : "Caricamento…"}</div></div>`; return h; }
-  const days = []; for (const t of list) { const d = days[days.length - 1]; if (d && d.date === t.date) d.items.push(t); else days.push({date:t.date, items:[t]}); }
-  h += `<div class="card"><div class="card-c flush" style="padding-top:0">` + days.map(d => {
-    const out = d.items.reduce((a, t) => a + (t.kind === "inc" ? 0 : Number(t.amount) || 0), 0);
-    return `<div class="dayh"><span>${esc(dayLabel(d.date))}</span>${out ? `<span class="mono">−${eur(out)}</span>` : ""}</div>` + d.items.map(txRow).join("");
-  }).join("") + `</div></div>`;
-  return h;
+  const side = !q && !S.catFilter ? movSummary(S.tx) : "";
+  let main;
+  if (!list.length) main = `<div class="card empty">${ic("list")}<div>${q ? `Nessun movimento trovato per "${esc(S.q)}".` : S.txLoaded ? (S.tx.length ? "Nessun movimento con questi filtri." : "Nessun movimento a " + esc(mLong(S.month)) + ". Tocca Aggiungi per inserire il primo.") : "Caricamento…"}</div></div>`;
+  else {
+    const days = []; for (const t of list) { const d = days[days.length - 1]; if (d && d.date === t.date) d.items.push(t); else days.push({date:t.date, items:[t]}); }
+    let lastM = "";
+    main = `<div class="card"><div class="card-c flush" style="padding-top:0">` + days.map(d => {
+      const out = d.items.reduce((a, t) => a + (t.kind === "inc" ? 0 : Number(t.amount) || 0), 0);
+      const m = (d.date || "").slice(0, 7); const mh = q && m !== lastM ? `<div class="dayh" style="color:var(--foreground);font-size:13px;padding-top:18px;text-transform:capitalize">${esc(mLabel(m))}</div>` : ""; lastM = m;
+      return mh + `<div class="dayh"><span>${esc(dayLabel(d.date))}</span>${out ? `<span class="mono">−${eur(out)}</span>` : ""}</div>` + d.items.map(txRow).join("");
+    }).join("") + `</div></div>`;
+  }
+  return h + (side ? `<div class="mcols"><div class="mside">${side}</div><div class="mmain">${main}</div></div>` : main);
 }
 
 /* ---------- andamento ---------- */
@@ -1514,10 +1551,11 @@ document.addEventListener("click", async e => {
   if (act === "fund-del") return deleteFundItem();
   if (act === "s-save") return saveSheet();
   if (act === "s-del") { if (!sheetState.confirmDel) { readSheetInputs(); sheetState.confirmDel = true; return drawSheet(); } try { await S.db.doc("tx/" + sheetState.id).delete(); closeSheet(); toast("Movimento eliminato"); } catch (er) { fail(er); } return; }
-  if (act === "edit") { const t = S.tx.find(x => x.id === a.dataset.id) || (S.tagTx || []).find(x => x.id === a.dataset.id) || S.expTx.find(x => x.id === a.dataset.id); if (t) openSheet(t); return; }
+  if (act === "edit") { const t = S.tx.find(x => x.id === a.dataset.id) || (S.tagTx || []).find(x => x.id === a.dataset.id) || S.expTx.find(x => x.id === a.dataset.id) || S.incTx.find(x => x.id === a.dataset.id); if (t) openSheet(t); return; }
   if (act === "cat-mode") { S.catMode = a.dataset.v; render(); return; }
   if (act === "set-sec") { S.setSec = a.dataset.v; const st = $("#settings"); if (st) { st.dataset.sec = a.dataset.v; st.querySelectorAll('[data-act="set-sec"]').forEach(b => b.setAttribute("aria-selected", String(b.dataset.v === a.dataset.v))); } return; }
   if (act === "set-theme") { const v = a.dataset.v; try { v === "auto" ? localStorage.removeItem("conti-theme") : localStorage.setItem("conti-theme", v); } catch {} if (v === "auto") delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = v; document.querySelectorAll('[data-act="set-theme"]').forEach(b => b.setAttribute("aria-selected", String(b.dataset.v === v))); return; }
+  if (act === "q-clear") { S.q = ""; render(); $("#msearch")?.focus(); return; }
   if (act === "rec-toggle") { S.recOpen = !S.recOpen; render(); return; }
   if (act === "goto-budget") { S.view = "budget"; window.scrollTo(0, 0); render(); return; }
   if (act === "filter-cat") { S.catFilter = a.dataset.id; S.tagFilter = ""; S.unsubTag?.(); S.tagView = ""; S.tagTx = null; S.view = "movimenti"; window.scrollTo(0, 0); render(); return; }
@@ -1562,6 +1600,7 @@ document.addEventListener("click", async e => {
 });
 document.addEventListener("input", e => {
   const t = e.target;
+  if (t.id === "msearch") { S.q = t.value; render(); return; }
   if (t.dataset?.bud != null && S.budgetDraft) {
     S.budgetDraft[t.dataset.bud] = parseAmt(t.value) || 0;
     const el = $("#btot"); if (el) el.textContent = eur0(budgetTotal());
