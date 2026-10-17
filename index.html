@@ -263,6 +263,10 @@ h1.pt{font-size:22px;font-weight:600;letter-spacing:-.02em}
 .perday{display:flex;flex-direction:column;gap:1px;padding-left:14px;border-left:1px solid var(--border)}
 .perday b{font-size:18px;font-weight:600;letter-spacing:-.02em}
 .perday span{font-size:12px;color:var(--muted-foreground)}
+.has-tip{position:relative;cursor:help;outline:none}
+.tip-i{display:inline-grid;place-items:center;width:14px;height:14px;border-radius:50%;border:1px solid var(--border);font-size:9px;color:var(--muted-foreground);margin-left:2px}
+.tip{position:absolute;left:0;top:calc(100% + 8px);z-index:20;width:min(340px,86vw);padding:10px 12px;border-radius:var(--radius);background:var(--popover);color:var(--foreground);border:1px solid var(--border);box-shadow:var(--shadow-lg);font-size:12px;line-height:1.5;opacity:0;visibility:hidden;transform:translateY(-4px);transition:opacity .15s,transform .15s,visibility .15s;pointer-events:none}
+.has-tip:hover .tip,.has-tip:focus .tip,.has-tip:focus-within .tip{opacity:1;visibility:visible;transform:none}
 @media (max-width:480px){.perday{flex-direction:row;align-items:baseline;gap:6px;border:0;padding:0;margin-top:-6px}.perday b{font-size:16px}}
 .pie{display:grid;grid-template-columns:minmax(0,180px) minmax(0,1fr);gap:18px;align-items:center}
 .pie svg{width:100%;height:auto;display:block}
@@ -673,11 +677,11 @@ function viewMese() {
     <div class="between muted sm"><span>Speso <b class="mono" style="color:var(--foreground);font-weight:500">${eur0(r.spentTot)}</b> di <span class="mono">${eur0(r.budTot)}</span></span><span class="mono">${pct}%</span></div>
   </div></div>
   <div class="stats">
-    <div class="card stat"><div class="l"><span class="gd g-inc"></span>Entrate</div><div class="v mono">${eur0(r.income)}</div></div>
+    <div class="card stat has-tip" tabindex="0" aria-describedby="incTip"><div class="l"><span class="gd g-inc"></span>Entrate <span class="tip-i" aria-hidden="true">?</span></div><div class="v mono">${eur0(r.income)}</div><div class="tip" role="tooltip" id="incTip">Entrate mensili = fissi <span class="mono">${eur0(r.inc.fixed)}</span> + fatture degli ultimi 12 mesi <span class="mono">${eur0(r.inc.pool)}</span> ÷ 12${r.inc.extra ? ` + extra del mese <span class="mono">${eur0(r.inc.extra)}</span>` : ""}${r.inc.invoiced ? ` · fatturato netto questo mese <span class="mono">${eur0(r.inc.invoiced)}</span>` : ""}. ${restCat() ? `Tutto quello che non è a budget va in ${esc(catById(restCat()).name)}, quindi il disponibile è entrate mensili − uscite.` : ""}</div></div>
     <div class="card stat"><div class="l"><span class="gd" style="background:var(--foreground)"></span>Uscite</div><div class="v mono">${eur0(r.spentTot)}</div></div>
     <div class="card stat"><div class="l"><span class="gd g-ris"></span>Al risparmio</div><div class="v mono">${eur0(r.rows.filter(x => x.c.group === "ris").reduce((a, x) => a + x.b, 0))}</div></div>
   </div>
-  <p class="xs muted" style="margin-top:-6px">Entrate mensili = fissi <span class="mono">${eur0(r.inc.fixed)}</span> + fatture degli ultimi 12 mesi <span class="mono">${eur0(r.inc.pool)}</span> ÷ 12${r.inc.extra ? ` + extra del mese <span class="mono">${eur0(r.inc.extra)}</span>` : ""}${r.inc.invoiced ? ` · fatturato netto questo mese <span class="mono">${eur0(r.inc.invoiced)}</span>` : ""}. ${restCat() ? `Tutto quello che non è a budget va in ${esc(catById(restCat()).name)}, quindi il disponibile è entrate mensili − uscite.` : ""}</p>`;
+  `;
   const rec = (S.cfg.recurring || []).filter(x => !S.tx.some(t => t.recId === x.id));
   if (rec.length && S.txLoaded && S.month <= curMonth() && started(S.month)) {
     h += `<div class="card"><div class="card-h"><div><div class="card-t">Ricorrenti da registrare</div><div class="card-d">${rec.length} ${rec.length === 1 ? "voce" : "voci"} di questo mese</div></div><button class="btn b-default b-sm" data-act="rec-all">${ic("check")}Registra tutte</button></div><div class="card-c flush">` +
