@@ -561,6 +561,7 @@ const freqOf = m => FREQS.find(f => f.m === Number(m)) || FREQS[3];
 const addMonthsISO = (d, k) => { const [y, mo, dd] = d.split("-").map(Number); const t = new Date(y, mo - 1 + k, 1); return isoOf(new Date(t.getFullYear(), t.getMonth(), Math.min(dd, new Date(t.getFullYear(), t.getMonth() + 1, 0).getDate()))); };
 const addDaysISO = (d, k) => { const [y, mo, dd] = d.split("-").map(Number); return isoOf(new Date(y, mo - 1, dd + k)); };
 const fmtDateS = iso => iso.slice(0, 4) === todayISO().slice(0, 4) ? new Intl.DateTimeFormat("it-IT", {day:"numeric", month:"short"}).format(new Date(iso + "T12:00:00")) : fmtDate(iso);
+const fmtDateL = iso => new Intl.DateTimeFormat("it-IT", {day:"numeric", month:"long", year:"numeric"}).format(new Date(iso + "T12:00:00"));
 const fmtDate = iso => new Intl.DateTimeFormat("it-IT", {day:"numeric", month:"short", year:"numeric"}).format(new Date(iso + "T12:00:00"));
 /* prossima scadenza di un abbonamento, a partire dalla data indicata e ripetendo il periodo */
 /* rinnovo automatico: di default sì per i mensili, no per gli altri (alla scadenza l'app chiede cosa fare) */
@@ -1056,7 +1057,7 @@ function nwCard() {
   const rows = S.nw.slice(-12).map(x => ({label:mShort(x.month), v:nwTotal(x)}));
   const ids = [...new Set([...accs.map(a => a.id), ...Object.keys(last.balances || {})])];
   return head + `<div class="card hero"><div class="card-c stack" style="gap:14px">
-    <div class="between" style="align-items:flex-start;flex-wrap:wrap;gap:8px"><div><div class="lbl">Totale a ${esc(mLong(last.month))}</div><div class="big mono">${eur(tot)}</div></div>${d != null ? `<span class="badge ${d < 0 ? "bd-destructive" : "bd-success"}">${ic(d < 0 ? "down" : "up")}<span class="mono">${sgn(d)}</span> da ${esc(mShort(prev.month))}</span>` : ""}</div>
+    <div class="between" style="align-items:flex-start;flex-wrap:wrap;gap:8px"><div><div class="lbl">${last.date ? `Totale al ${esc(fmtDateL(last.date))}` : `Totale a ${esc(mLong(last.month))}`}</div><div class="big mono">${eur(tot)}</div></div>${d != null ? `<span class="badge ${d < 0 ? "bd-destructive" : "bd-success"}">${ic(d < 0 ? "down" : "up")}<span class="mono">${sgn(d)}</span> dal ${esc(prev.date ? fmtDateS(prev.date) : mShort(prev.month))}</span>` : ""}</div>
     ${tax > 0 ? `<div class="between sm"><span class="muted">Senza la quota tasse (${eur0(tax)})</span><b class="mono">${eur(tot - tax)}</b></div>` : ""}
     ${rows.length > 1 ? `<div class="chart">${svgBars(rows, [{k:"v", c:"var(--chart-3)", n:"Totale"}], 150)}</div>` : ""}
   </div></div>
@@ -1066,7 +1067,7 @@ function nwCard() {
 let nwState = null;
 function openNw() {
   const last = S.nw.at(-1), accs = S.cfg.accounts?.length ? S.cfg.accounts : [{id:"acc_" + Math.random().toString(36).slice(2, 7), name:"", note:""}];
-  nwState = {month:curMonth(), rows:accs.map(a => ({id:a.id, name:a.name, note:a.note || "", v:String(last?.balances?.[a.id] ?? "").replace(".", ",")}))};
+  nwState = {date:todayISO(), rows:accs.map(a => ({id:a.id, name:a.name, note:a.note || "", v:String(last?.balances?.[a.id] ?? "").replace(".", ",")}))};
   const bg = document.createElement("div"); bg.className = "ovl"; bg.id = "nwBg";
   bg.innerHTML = `<div class="drawer" role="dialog" aria-modal="true" aria-labelledby="nwTitle" id="nwd"></div>`;
   document.body.appendChild(bg); document.body.style.overflow = "hidden";
@@ -1074,13 +1075,13 @@ function openNw() {
   drawNw(); enableSwipeClose(bg, closeNw);
 }
 function closeNw() { closeOverlay("nwBg"); nwState = null; }
-function readNw() { if (!nwState) return; document.querySelectorAll("#nwd [data-nw]").forEach(r => { const x = nwState.rows[Number(r.dataset.nw)]; if (!x) return; x.name = r.querySelector("[data-f=name]").value; x.note = r.querySelector("[data-f=note]").value; x.v = r.querySelector("[data-f=v]").value; }); const m = $("#nwMonth"); if (m) nwState.month = m.value || nwState.month; }
+function readNw() { if (!nwState) return; document.querySelectorAll("#nwd [data-nw]").forEach(r => { const x = nwState.rows[Number(r.dataset.nw)]; if (!x) return; x.name = r.querySelector("[data-f=name]").value; x.note = r.querySelector("[data-f=note]").value; x.v = r.querySelector("[data-f=v]").value; }); const m = $("#nwDate"); if (m) nwState.date = m.value || nwState.date; }
 function drawNw() {
   const el = $("#nwd"); if (!el || !nwState) return;
   const tot = nwState.rows.reduce((a, x) => a + (parseAmt(x.v) || 0), 0);
   el.innerHTML = `<div class="handle-zone"><div class="handle"></div></div>
     <div class="between"><div><h2 id="nwTitle" style="font-size:17px;font-weight:600">Saldi dei conti</h2><p class="muted sm">Totale <span class="mono" id="nwTot">${eur(tot)}</span></p></div><button class="btn b-ghost b-icon b-sm" data-act="nw-close" aria-label="Chiudi">${ic("x")}</button></div>
-    <div class="field"><label for="nwMonth">Mese</label><input id="nwMonth" class="inp" type="month" value="${esc(nwState.month)}"></div>
+    <div class="field"><label for="nwDate">Data dei saldi</label><input id="nwDate" class="inp" type="date" value="${esc(nwState.date)}"><p class="xs muted" style="margin-top:4px">Per ogni mese resta l'ultimo aggiornamento.</p></div>
     <div class="stack" style="gap:10px">${nwState.rows.map((x, i) => `<div class="card card-c stack" data-nw="${i}" style="gap:8px;padding:12px"><div class="grid2"><input class="inp" data-f="name" placeholder="Nome del conto" value="${esc(x.name)}" aria-label="Nome del conto"><input class="inp mono" data-f="v" inputmode="decimal" placeholder="Saldo €" value="${esc(x.v)}" aria-label="Saldo"></div><div class="row" style="gap:8px"><input class="inp grow" data-f="note" placeholder="A cosa serve (facoltativo)" value="${esc(x.note)}" aria-label="Nota"><button class="btn b-dghost b-icon b-sm" data-act="nw-del" data-i="${i}" aria-label="Togli conto">${ic("trash")}</button></div></div>`).join("")}</div>
     <div><button class="btn b-outline b-sm" data-act="nw-add">${ic("plus")}Aggiungi conto</button></div>
     <p class="xs muted">Scrivi il saldo di ogni conto alla fine del mese. Se lo stesso mese è già salvato, viene aggiornato.</p>
@@ -1088,11 +1089,11 @@ function drawNw() {
 }
 async function saveNw() {
   readNw(); const rows = nwState.rows.filter(x => x.name.trim()); if (!rows.length) return toast("Aggiungi almeno un conto");
-  if (!/^\d{4}-\d{2}$/.test(nwState.month)) return toast("Scegli il mese");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(nwState.date || "")) return toast("Scegli la data"); const month = nwState.date.slice(0, 7);
   const cfg = structuredClone(S.cfg); cfg.accounts = rows.map(x => ({id:x.id, name:x.name.trim(), note:x.note.trim()}));
   const balances = {}; rows.forEach(x => balances[x.id] = r2(parseAmt(x.v) || 0));
   $("#nwSave").disabled = true;
-  try { await S.db.doc("config/main").set(cfg); S.cfg = cfg; await S.db.doc("nw/" + nwState.month).set({month:nwState.month, balances, saved:Date.now()}); closeNw(); render(); toast("Saldi salvati"); }
+  try { await S.db.doc("config/main").set(cfg); S.cfg = cfg; await S.db.doc("nw/" + month).set({month, date:nwState.date, balances, saved:Date.now()}); closeNw(); render(); toast("Saldi salvati"); }
   catch (e) { fail(e); const b = $("#nwSave"); if (b) b.disabled = false; }
 }
 function viewSalvadanai() {
