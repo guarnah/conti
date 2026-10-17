@@ -853,7 +853,7 @@ function viewMese() {
   let fundHtml = "";
   if ((S.cfg.annual || []).some(a => !isBill(a))) {
     const f = fundStatus("annual");
-    fundHtml = `<div class="card"><div class="card-h"><div><div class="card-t row"><span class="gd g-fondo"></span>Fondo spese annuali</div><div class="card-d">Accantoni <span class="mono">${eur(monthlyAccrualAll())}</span> al mese (abbonamenti annuali inclusi), già conteggiati nelle uscite</div></div><span class="muted">${ic("piggy")}</span></div>
+    fundHtml = `<div class="card"><div class="card-h"><div><div class="card-t row"><span class="gd g-fondo"></span>Fondo spese annuali</div><div class="card-d">Accantoni <span class="mono">${eur((S.cfg.annual || []).filter(a => !isBill(a)).reduce((s0, a) => s0 + accrualOf(a), 0))}</span> al mese (abbonamenti annuali inclusi, bollette a parte), già conteggiati nelle uscite</div></div><span class="muted">${ic("piggy")}</span></div>
       <div class="card-c stack" style="gap:12px">
       <div class="stats"><div class="stat" style="padding:0"><div class="l">Accantonato</div><div class="v mono">${eur0(f.accrued)}</div></div><div class="stat" style="padding:0"><div class="l">Pagato</div><div class="v mono">${eur0(f.paid)}</div></div><div class="stat" style="padding:0"><div class="l">Disponibile</div><div class="v mono" style="color:${f.avail < 0 ? "var(--destructive)" : "var(--success)"}">${eur0(f.avail)}</div></div></div>
       ${f.upcoming.length ? `<div class="stack" style="gap:6px">${f.upcoming.map(a => `<div class="between sm"><span class="row">${ic("cal")}${esc(a.name)}</span><span class="row"><span class="badge bd-outline">${esc(a.dueD ? fmtDate(a.dueD) : mShort(a.dueM))}</span><span class="mono">${eur0(a.mine)}</span></span></div>`).join("")}</div>` : ""}
@@ -865,7 +865,7 @@ function viewMese() {
     const accRow = g.id === "ess" && (S.cfg.annual || []).length;
     if (!rows.length && !accRow && g.id !== "ris") continue;
     if (g.id === "ris" || g.id === "ess") h += `<div class="gcol">`;
-    if (!rows.length && !accRow) { h += potsMini() + `</div>`; continue; }
+    if (!rows.length && !accRow) { h += potsMini() + (g.id === "ris" && fundHtml ? `<div class="wide-only">${fundHtml}</div>` : "") + `</div>`; continue; }
     const gb = rows.reduce((a, x) => a + x.b, 0) + (accRow ? r.acc : 0), gs = rows.reduce((a, x) => a + x.s, 0) + (accRow ? r.acc : 0);
     h += `<div class="card"><div class="card-h"><div><div class="card-t row"><span class="gd g-${g.id}"></span>${g.name}</div><div class="card-d">${g.d}</div></div><span class="badge bd-secondary mono">${eur0(gs)} / ${eur0(gb)}</span></div><div class="card-c flush">`;
     if (accRow) { const bl = (S.cfg.annual || []).filter(isBill), bAcc = started(S.month) ? bl.reduce((s0, a) => s0 + accrualOf(a), 0) : 0, oAcc = r.acc - bAcc;
@@ -881,8 +881,8 @@ function viewMese() {
         ${progHtml(x.s, x.b, r.isCur && !x.c.fixed ? x.proj : 0)}</button>`;
     }).join(`<div class="sep"></div>`);
     h += `</div></div>`;
-    if (g.id === "ris") h += potsMini() + `</div>`;
-    if (g.id === "ess") h += (billsHtml ? `<div class="wide-only">${billsHtml}</div>` : "") + (fundHtml ? `<div class="wide-only">${fundHtml}</div>` : "") + `</div>`;
+    if (g.id === "ris") h += potsMini() + (fundHtml ? `<div class="wide-only">${fundHtml}</div>` : "") + `</div>`;
+    if (g.id === "ess") h += (billsHtml ? `<div class="wide-only">${billsHtml}</div>` : "") + `</div>`;
   }
   h += `</div>`;
   if (billsHtml) h += `<div class="narrow-only">${billsHtml}</div>`;
