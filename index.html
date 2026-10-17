@@ -256,10 +256,12 @@ h1.pt{font-size:22px;font-weight:600;letter-spacing:-.02em}
   .stickybar{bottom:0}
 }
 /* Mese su schermo largo: Essenziali, Extra e Risparmio su tre colonne */
-.gcols{display:flex;flex-direction:column;gap:16px}
+.gcols,.gcol{display:flex;flex-direction:column;gap:16px}
+.wide-only{display:none}
 @media (min-width:1100px){
   .hdr .in,body[data-view="mese"] .wrap{max-width:1240px}
   .gcols{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:start}
+  .wide-only{display:block}
 }
 @media (max-width:420px){.hero .big{font-size:34px}.stat{padding:10px 11px}.stat .v{font-size:15px}.card-h{padding:16px 16px 0}.card-c{padding:14px 16px 16px}}
 @media (prefers-reduced-motion:no-preference){.drawer{animation:dIn .2s cubic-bezier(.32,.72,0,1)}@keyframes dIn{from{transform:translateY(24px);opacity:.5}}.toast{animation:tIn .2s ease-out}@keyframes tIn{from{transform:translate(-50%,8px);opacity:0}}}
@@ -660,7 +662,9 @@ function viewMese() {
   for (const g of GROUPS) {
     const rows = r.rows.filter(x => x.c.group === g.id && (x.b > 0 || x.s > 0));
     const accRow = g.id === "ess" && (S.cfg.annual || []).length;
-    if (!rows.length && !accRow) continue;
+    if (!rows.length && !accRow && g.id !== "ris") continue;
+    if (g.id === "ris") h += `<div class="gcol">`;
+    if (!rows.length && !accRow) { h += potsMini() + `</div>`; continue; }
     const gb = rows.reduce((a, x) => a + x.b, 0) + (accRow ? r.acc : 0), gs = rows.reduce((a, x) => a + x.s, 0) + (accRow ? r.acc : 0);
     h += `<div class="card"><div class="card-h"><div><div class="card-t row"><span class="gd g-${g.id}"></span>${g.name}</div><div class="card-d">${g.d}</div></div><span class="badge bd-secondary mono">${eur0(gs)} / ${eur0(gb)}</span></div><div class="card-c flush">`;
     if (accRow) h += `<button class="crow" data-act="open-fund">
@@ -675,6 +679,7 @@ function viewMese() {
         <div class="xs muted">${x.left >= 0 ? `Restano <span class="mono">${eur(x.left)}</span>` : `Oltre di <span class="mono">${eur(-x.left)}</span>`}</div></button>`;
     }).join(`<div class="sep"></div>`);
     h += `</div></div>`;
+    if (g.id === "ris") h += potsMini() + `</div>`;
   }
   h += `</div>`;
   if ((S.cfg.annual || []).length) {
@@ -743,6 +748,13 @@ function viewTag() {
     return mh + `<div class="dayh"><span>${esc(dayLabel(d.date))}</span>${out ? `<span class="mono">−${eur(out)}</span>` : ""}</div>` + d.items.map(txRow).join("");
   }).join("") + `</div></div>`;
   return h;
+}
+/* riepilogo dei salvadanai nella colonna Risparmio del Mese, solo su schermo largo */
+function potsMini() {
+  const pl = pots().map(c => ({c, ...potStatus(c.id)})); if (!pl.length) return "";
+  const tot = pl.reduce((a, p) => a + p.avail, 0);
+  return `<div class="card wide-only"><div class="card-h"><div><div class="card-t row"><span class="gd g-ris"></span>Salvadanai</div><div class="card-d">Totale da parte <span class="mono">${eur0(tot)}</span></div></div><button class="btn b-ghost b-sm" data-tab="salvadanai">Apri</button></div><div class="card-c flush">` +
+    pl.map(p => { const g = goalInfo(p.c, p); return `<button class="crow" data-act="open-pot" data-id="${esc(p.c.id)}"><div class="between"><span class="nm">${esc(p.c.name)}</span><span class="vl mono"><b style="color:${p.avail < 0 ? "var(--destructive)" : "var(--foreground)"}">${eur0(p.avail)}</b>${g ? ` / ${eur0(g.goal)}` : ""}</span></div>${g ? progHtml(p.avail, g.goal) : ""}</button>`; }).join(`<div class="sep"></div>`) + `</div></div>`;
 }
 function viewSalvadanai() {
   if (S.potView) return viewPot();
