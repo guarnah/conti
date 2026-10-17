@@ -1049,6 +1049,27 @@ async function saveClose() {
 }
 /* ---------- patrimonio: saldi dei conti a fine mese ---------- */
 const nwTotal = snap => Object.values(snap?.balances || {}).reduce((a, v) => a + (Number(v) || 0), 0);
+/* andamento dei singoli conti: una linea per conto, asse x proporzionale al tempo */
+function nwLines(ids, accs) {
+  const pts = S.nw.map(x => ({d:x.date || x.month + "-01", b:x.balances || {}})).sort((a, b) => a.d.localeCompare(b.d));
+  if (pts.length < 2) return `<p class="xs muted">Il grafico dei singoli conti compare dal secondo aggiornamento dei saldi.</p>`;
+  const COL = ["var(--chart-3)", "var(--chart-2)", "var(--chart-1)", "var(--chart-4)", "var(--income)", "var(--muted-foreground)", "var(--destructive)"];
+  const t = d => new Date(d + "T12:00:00").getTime(), t0 = t(pts[0].d), t1 = Math.max(t(pts.at(-1).d), t0 + 864e5);
+  const wide = innerWidth >= 1100, W = wide ? 1180 : Math.max(320, Math.min(640, innerWidth - 40)), H = wide ? 210 : 180, pl = 40, pr = 12, pt = 10, pb = 22;
+  const max = Math.max(1, ...pts.flatMap(p => ids.map(id => Number(p.b[id]) || 0))) * 1.08;
+  const X = d => pl + (W - pl - pr) * (t(d) - t0) / (t1 - t0), Y = v => pt + (H - pt - pb) * (1 - v / max);
+  const k = v => v >= 1000 ? (v / 1000).toLocaleString("it-IT", {maximumFractionDigits:1}) + "k" : String(Math.round(v));
+  let svg = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Andamento dei saldi dei singoli conti">`;
+  [0, max / 2, max / 1.08].forEach(v => { svg += `<line x1="${pl}" x2="${W - pr}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--border)" ${v ? 'stroke-dasharray="3 3"' : ""}/><text x="${pl - 6}" y="${Y(v) + 3}" text-anchor="end">${k(v)}</text>`; });
+  ids.forEach((id, i) => { const c = COL[i % COL.length], P = pts.filter(p => id in p.b);
+    if (P.length) svg += `<polyline points="${P.map(p => `${X(p.d).toFixed(1)},${Y(Number(p.b[id]) || 0).toFixed(1)}`).join(" ")}" fill="none" stroke="${c}" stroke-width="2.25" stroke-linejoin="round" stroke-linecap="round"/>` + P.map(p => `<circle cx="${X(p.d).toFixed(1)}" cy="${Y(Number(p.b[id]) || 0).toFixed(1)}" r="3.2" fill="${c}" stroke="var(--card)" stroke-width="1.5"/>`).join(""); });
+  const lab = pts.length <= 6 ? pts : pts.filter((_, i) => i % Math.ceil(pts.length / 6) === 0 || i === pts.length - 1);
+  lab.forEach((p, i) => { svg += `<text x="${X(p.d)}" y="${H - 6}" text-anchor="${i === 0 ? "start" : i === lab.length - 1 ? "end" : "middle"}">${esc(fmtDateS(p.d))}</text>`; });
+  pts.forEach((p, i) => { const x0 = i ? (X(pts[i - 1].d) + X(p.d)) / 2 : pl, x1 = i < pts.length - 1 ? (X(p.d) + X(pts[i + 1].d)) / 2 : W - pr;
+    svg += `<rect x="${x0}" y="${pt}" width="${Math.max(1, x1 - x0)}" height="${H - pt - pb}" fill="transparent"><title>${esc(fmtDate(p.d))}\n${ids.filter(id => id in p.b).map(id => `${esc(accs.find(a => a.id === id)?.name || id)}: ${eur(Number(p.b[id]) || 0)}`).join("\n")}</title></rect>`; });
+  svg += `</svg>`;
+  return `<div class="legend" style="margin-bottom:6px;flex-wrap:wrap">${ids.map((id, i) => `<span><i style="background:${COL[i % COL.length]}"></i>${esc(accs.find(a => a.id === id)?.name || id)}</span>`).join("")}</div><div class="chart nwl">${svg}</div>`;
+}
 function nwCard() {
   const accs = S.cfg.accounts || [], last = S.nw.at(-1), prev = S.nw.at(-2);
   const head = `<div class="between" style="align-items:flex-end;gap:12px"><div><h1 class="pt">Patrimonio</h1><p class="muted sm">I tuoi conti e quanto hai da parte</p></div><button class="btn b-default b-sm" data-act="nw-edit" style="flex:none">${ic("check")}Aggiorna saldi</button></div>`;
@@ -1061,6 +1082,7 @@ function nwCard() {
     ${tax > 0 ? `<div class="between sm"><span class="muted">Senza la quota tasse (${eur0(tax)})</span><b class="mono">${eur(tot - tax)}</b></div>` : ""}
     ${rows.length > 1 ? `<div class="chart">${svgBars(rows, [{k:"v", c:"var(--chart-3)", n:"Totale"}], 150)}</div>` : ""}
   </div></div>
+  <div class="card nwtrend"><div class="card-h"><div><div class="card-t">Andamento dei conti</div><div class="card-d">Si aggiorna a ogni nuovo inserimento dei saldi</div></div></div><div class="card-c" style="padding-top:6px">${nwLines([...new Set([...ids, ...S.nw.flatMap(x => Object.keys(x.balances || {}))])].filter(id => ids.includes(id) || accs.some(a => a.id === id)), accs)}</div></div>
   <div class="card"><div class="card-c flush">${ids.map(id => { const a = accs.find(x => x.id === id), v = Number(last.balances?.[id]) || 0, pv = prev ? Number(prev.balances?.[id]) || 0 : null;
     return `<div class="trow" style="cursor:default;grid-template-columns:36px minmax(0,1fr) auto"><div class="ava g-ris">${ic("wallet")}</div><div class="grow"><div class="t1">${esc(a?.name || id)}</div>${a?.note ? `<div class="t2">${esc(a.note)}</div>` : ""}</div><div style="text-align:right"><div class="am mono">${eur(v)}</div>${pv != null && Math.abs(v - pv) > 0.5 ? `<div class="xs mono" style="color:${v < pv ? "var(--destructive)" : "var(--success)"}">${sgn(v - pv)}</div>` : ""}</div></div>`; }).join("")}</div></div>`;
 }
