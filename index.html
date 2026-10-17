@@ -155,6 +155,10 @@ svg.i{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-widt
 .cr2 .prog{height:5px}
 .cr2 .lft{font-family:var(--font-sans);font-size:11.5px;margin-right:8px;color:var(--muted-foreground)}
 .recbar .card-c{padding-block:12px}
+#settings .sec{display:none}
+#settings[data-sec="annual"] .sec[data-sec="annual"],#settings[data-sec="categories"] .sec[data-sec="categories"],#settings[data-sec="recurring"] .sec[data-sec="recurring"],#settings[data-sec="general"] .sec[data-sec="general"]{display:flex;flex-direction:column;gap:16px}
+.settabs{width:100%;overflow-x:auto;scrollbar-width:none}.settabs::-webkit-scrollbar{display:none}
+.settabs .tab{white-space:nowrap}
 .sep{height:1px;background:var(--border);margin:0 12px}
 
 /* group dot */
@@ -298,6 +302,7 @@ details.hist summary{padding-bottom:18px}
 @media (max-width:420px){.hero .big{font-size:34px}.stat{padding:10px 11px}.stat .v{font-size:15px}.card-h{padding:16px 16px 0}.card-c{padding:14px 16px 16px}}
 @media (prefers-reduced-motion:no-preference){.drawer{animation:dIn .2s cubic-bezier(.32,.72,0,1)}@keyframes dIn{from{transform:translateY(24px);opacity:.5}}.toast{animation:tIn .2s ease-out}@keyframes tIn{from{transform:translate(-50%,8px);opacity:0}}}
 </style>
+<script>try{var t=localStorage.getItem("conti-theme");if(t)document.documentElement.dataset.theme=t;}catch(e){}</script>
 <style>:root{padding-top:env(safe-area-inset-top,0px)} body{margin:0} img{max-width:100%} [hidden]{display:none!important}</style>
 
 <style>
@@ -1023,17 +1028,26 @@ const tblCard = (kind, title, desc, heads, items, rowFn, addLbl, foot = "") => `
 function viewAltro() {
   const c = S.cfg; const yr = curMonth().slice(0, 4);
   const paidYr = id => S.fundTx.filter(t => t.annId === id && (t.month || "").startsWith(yr)).reduce((a, t) => a + (Number(t.amount) || 0), 0);
-  return `<div id="settings" class="stack">
+  const sec = S.setSec || "annual", SECS = [["annual", "Annuali"], ["categories", "Categorie"], ["recurring", "Ricorrenti"], ["general", "Generale"]];
+  const th = (() => { try { return localStorage.getItem("conti-theme") || "auto"; } catch { return "auto"; } })();
+  return `<div id="settings" class="stack" data-sec="${sec}">
   <div><h1 class="pt">Impostazioni</h1><p class="muted sm">Le modifiche si applicano dopo "Salva impostazioni".</p></div>
+  <div class="tlist settabs" role="tablist" aria-label="Sezioni delle impostazioni">${SECS.map(([k, n]) => `<button class="tab" role="tab" data-act="set-sec" data-v="${k}" aria-selected="${k === sec}">${n}</button>`).join("")}</div>
+  <div class="sec" data-sec="general"><div class="card"><div class="card-h"><div><div class="card-t">Aspetto</div><div class="card-d">Vale solo per questo dispositivo</div></div></div><div class="card-c"><div class="tlist" role="tablist" aria-label="Tema" style="width:auto;display:inline-grid">${[["auto", "Automatico"], ["light", "Chiaro"], ["dark", "Scuro"]].map(([k, n]) => `<button class="tab" role="tab" data-act="set-theme" data-v="${k}" aria-selected="${k === th}">${n}</button>`).join("")}</div></div></div></div>
+  <div class="sec" data-sec="annual">
   ${tblCard("annual", "Spese annuali", `Accantonate ogni mese nel fondo · totale <span class="mono">${eur(monthlyAccrualAll())}</span>/mese, abbonamenti annuali inclusi`, [["Voce"], ["Annuo", "r"], ["Tua %", "r"], ["Scadenza"], ["Al mese", "r"], [""]], c.annual || [], a => ROW.annual(a, paidYr(a.id)), "Aggiungi voce",
     `<div class="grid2" style="margin-top:16px"><div class="field"><label for="fundInitial">Saldo iniziale del fondo</label><input class="inp" id="fundInitial" inputmode="decimal" value="${esc(String(c.fundInitial || 0).replace(".", ","))}"></div><div class="field"><label for="startMonth">Accantona a partire da</label><input class="inp" id="startMonth" type="month" value="${esc(c.startMonth || curMonth())}"></div></div>
     <p class="xs muted" style="margin-top:10px">"Tua %" serve per le spese che dividi, ad esempio bollette al 50%.</p>`)}
+  </div><div class="sec" data-sec="recurring">
   ${tblCard("recurring", "Ricorrenti mensili", "Proposte ogni mese, le registri con un tap. Gli abbonamenti si gestiscono a parte.", [["Voce"], ["Importo", "r"], ["Categoria"], [""]], (c.recurring || []).filter(x => x.cat !== SUBCAT), ROW.recurring, "Aggiungi ricorrente", `<div style="margin-top:10px"><button class="btn b-outline b-sm" data-act="open-subs">${ic("repeat")}Gestisci abbonamenti (${subs().length + annSubs().length})</button></div>`)}
+  </div><div class="sec" data-sec="general">
   <div class="card"><div class="card-c between" style="flex-wrap:wrap;gap:10px"><div><div class="card-t">Fonti di entrata e storico fatture</div><div class="card-d">Ora sono nella sezione Entrate</div></div><button class="btn b-outline b-sm" data-tab="entrate">${ic("in")}Vai a Entrate</button></div></div>
+  </div><div class="sec" data-sec="categories">
   ${tblCard("categories", "Categorie", '"Fissa": la proiezione la considera pagata per intero', [["Nome"], ["Area"], ["Fissa"], ["Budget base", "r"], ["Attiva"]], c.categories || [], ROW.categories, "Aggiungi categoria", `<p class="xs muted" style="margin-top:10px">Le categorie disattivate restano nei movimenti passati.</p>`)}
   <div class="card"><div class="card-h"><div><div class="card-t">Salvadanai</div><div class="card-d">Categorie di risparmio da cui puoi pagare una spesa senza pesare sul mese</div></div></div>
   <div class="card-c tw" style="padding-top:8px">${(c.categories || []).filter(k => k.group === "ris" && !k.hidden).length ? `<table><thead><tr><th>Categoria</th><th class="r">Saldo iniziale €</th><th>Si può usare</th></tr></thead><tbody>${(c.categories || []).filter(k => k.group === "ris" && !k.hidden).map(k => `<tr data-row="pot" data-id="${esc(k.id)}"><td>${esc(k.name)}</td><td class="r"><input class="inp num" style="width:100px" data-f="init" inputmode="decimal" value="${esc(String(k.potInitial || 0).replace(".", ","))}" aria-label="Saldo iniziale di ${esc(k.name)}"></td><td><input type="checkbox" data-f="pot" ${isPot(k) ? "checked" : ""} aria-label="Usabile per pagare spese"></td></tr>`).join("")}</tbody></table>` : `<p class="muted sm">Nessuna categoria di risparmio attiva.</p>`}
   <p class="xs muted" style="margin-top:10px">Il saldo iniziale è quello che c'era prima di usare l'app, per esempio i soldi già sul conto della casa. Per un nuovo salvadanaio (es. un viaggio) aggiungi una categoria nell'area Risparmio.</p></div></div>
+  </div><div class="sec" data-sec="general">
   <div class="card"><div class="card-h"><div><div class="card-t">Tag</div><div class="card-d">Suggeriti quando aggiungi un movimento</div></div></div><div class="card-c"><div class="field"><label for="tagsIn">Separati da virgola</label><input class="inp" id="tagsIn" value="${esc((c.tags || []).join(", "))}"></div></div></div>
   <div class="card"><div class="card-h"><div><div class="card-t">Account e backup</div><div class="card-d">Collegato come ${esc(window.__cloud?.email || "")}</div></div></div><div class="card-c stack" style="gap:10px">
     <div class="row" style="flex-wrap:wrap"><button class="btn b-outline b-sm" data-act="backup-export">${ic("dl")}Scarica backup</button><label class="btn b-outline b-sm" for="backupFile" style="cursor:pointer">${ic("plus")}Importa backup</label><input type="file" id="backupFile" accept=".json,application/json" hidden></div>
@@ -1041,6 +1055,7 @@ function viewAltro() {
     <div><button class="btn b-dghost b-sm" data-act="logout">Esci da questo dispositivo</button></div>
     <p class="xs muted">Il backup è un file con tutti i tuoi dati: tienine una copia ogni tanto. Importarlo aggiunge o sovrascrive i movimenti con lo stesso identificativo.</p></div></div>
   <div class="card"><div class="card-h"><div><div class="card-t">Esporta</div><div class="card-d">File CSV che si apre in Excel</div></div></div><div class="card-c row" style="flex-wrap:wrap"><button class="btn b-outline b-sm" data-act="export-month">${ic("dl")}<span style="text-transform:capitalize">${esc(mLong(S.month))}</span></button><button class="btn b-outline b-sm" data-act="export-all">${ic("dl")}Tutti i movimenti</button></div></div>
+  </div>
   <div class="stickybar"><button class="btn b-default" data-act="save-cfg" style="box-shadow:var(--shadow-lg)">${ic("check")}Salva impostazioni</button></div>
   </div>`;
 }
@@ -1501,6 +1516,8 @@ document.addEventListener("click", async e => {
   if (act === "s-del") { if (!sheetState.confirmDel) { readSheetInputs(); sheetState.confirmDel = true; return drawSheet(); } try { await S.db.doc("tx/" + sheetState.id).delete(); closeSheet(); toast("Movimento eliminato"); } catch (er) { fail(er); } return; }
   if (act === "edit") { const t = S.tx.find(x => x.id === a.dataset.id) || (S.tagTx || []).find(x => x.id === a.dataset.id) || S.expTx.find(x => x.id === a.dataset.id); if (t) openSheet(t); return; }
   if (act === "cat-mode") { S.catMode = a.dataset.v; render(); return; }
+  if (act === "set-sec") { S.setSec = a.dataset.v; const st = $("#settings"); if (st) { st.dataset.sec = a.dataset.v; st.querySelectorAll('[data-act="set-sec"]').forEach(b => b.setAttribute("aria-selected", String(b.dataset.v === a.dataset.v))); } return; }
+  if (act === "set-theme") { const v = a.dataset.v; try { v === "auto" ? localStorage.removeItem("conti-theme") : localStorage.setItem("conti-theme", v); } catch {} if (v === "auto") delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = v; document.querySelectorAll('[data-act="set-theme"]').forEach(b => b.setAttribute("aria-selected", String(b.dataset.v === v))); return; }
   if (act === "rec-toggle") { S.recOpen = !S.recOpen; render(); return; }
   if (act === "goto-budget") { S.view = "budget"; window.scrollTo(0, 0); render(); return; }
   if (act === "filter-cat") { S.catFilter = a.dataset.id; S.tagFilter = ""; S.unsubTag?.(); S.tagView = ""; S.tagTx = null; S.view = "movimenti"; window.scrollTo(0, 0); render(); return; }
