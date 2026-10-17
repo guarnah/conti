@@ -516,7 +516,18 @@ const started = m => !!(S.cfg?.startMonth && m >= S.cfg.startMonth);
 /* accantonamento delle spese annuali che NON sono abbonamenti (riga "Spese annuali") */
 /* durata del periodo: 12 per le spese annuali, 3/6/12 per gli abbonamenti non mensili */
 const perMonths = a => Number(a.months) || 12;
-const accrualOf = a => mineA(a) / perMonths(a);
+/* le spese del fondo (non gli abbonamenti) imparano dai pagamenti veri: stima annua = pagato negli ultimi 12 mesi
+   + la stima iniziale per i mesi non ancora coperti da bollette; la quota mensile è 1/12 di questa stima */
+const learnFrom = a => a.learnFrom || (S.cfg?.startMonth ? S.cfg.startMonth + "-01" : "0000-00-00");
+function learned(a) {
+  const est = mineA(a) * 12 / perMonths(a);
+  if (a.sub) return {annual:est, paid:0, covered:0, n:0, est};
+  const since = [learnFrom(a), addDaysISO(todayISO(), -365)].sort().pop();
+  const tx = (S.fundTx || []).filter(t => t.annId === a.id && (t.date || "") >= since);
+  const paid = tx.reduce((s, t) => s + (Number(t.amount) || 0), 0), covered = Math.min(12, tx.reduce((s, t) => s + (Number(t.covers) || perMonths(a)), 0));
+  return {annual:covered >= 12 ? paid * 12 / Math.max(12, tx.reduce((s, t) => s + (Number(t.covers) || perMonths(a)), 0)) : paid + est * (12 - covered) / 12, paid, covered, n:tx.length, est};
+}
+const accrualOf = a => learned(a).annual / 12;
 const FREQS = [{m:1, n:"Mensile", per:"al mese"}, {m:2, n:"Bimestrale", per:"ogni 2 mesi"}, {m:3, n:"Trimestrale", per:"ogni 3 mesi"}, {m:6, n:"Semestrale", per:"ogni 6 mesi"}, {m:12, n:"Annuale", per:"l'anno"}];
 const freqOf = m => FREQS.find(f => f.m === Number(m)) || FREQS[3];
 const addMonthsISO = (d, k) => { const [y, mo, dd] = d.split("-").map(Number); const t = new Date(y, mo - 1 + k, 1); return isoOf(new Date(t.getFullYear(), t.getMonth(), Math.min(dd, new Date(t.getFullYear(), t.getMonth() + 1, 0).getDate()))); };
@@ -1527,7 +1538,7 @@ function drawSheet(focus) {
           ${open ? `<div class="togs" style="margin-top:8px">${rest.map(c => `<button class="tog" data-s="cat" data-v="${esc(c.id)}" aria-pressed="${st.cat === c.id}"><span class="gd g-${c.group}"></span>${esc(c.name)}</button>`).join("")}<button class="tog" data-s="cat" data-v="fondo" aria-pressed="${st.cat === "fondo"}"><span class="gd g-fondo"></span>Spesa annuale</button></div>` : `<button class="btn b-ghost b-sm" data-act="s-more" style="margin-top:6px;align-self:flex-start">Altre categorie (${rest.length + 1})</button>`}<div>`; })()}
     </div></div>
     ${canFrom(st) ? `<div class="field"><span class="lab">Pagata con</span><div class="togs" role="group" aria-label="Pagata con"><button class="tog" data-s="from" data-v="" aria-pressed="${!st.from}">Budget del mese</button>${pots().map(c => `<button class="tog" data-s="from" data-v="${esc(c.id)}" aria-pressed="${st.from === c.id}"><span class="gd g-ris"></span>${esc(c.name)} <span class="mono muted">${eur0(potAvailFor(st, c.id))}</span></button>`).join("")}</div><p class="xs muted" id="sFrom">${fromHint(st)}</p></div>` : ""}
-    ${!isInc && st.cat === "fondo" ? `<div class="field"><label for="sAnn">Quale spesa annuale?</label><select id="sAnn" class="inp"><option value="">Scegli…</option>${(S.cfg.annual || []).map(a => `<option value="${esc(a.id)}" ${st.annId === a.id ? "selected" : ""}>${esc(a.name)}${a.sub ? " (abbonamento)" : ""}</option>`).join("")}</select></div>` : ""}
+    ${!isInc && st.cat === "fondo" ? `<div class="field"><label for="sAnn">Quale spesa annuale?</label><select id="sAnn" class="inp"><option value="">Scegli…</option>${(S.cfg.annual || []).map(a => `<option value="${esc(a.id)}" ${st.annId === a.id ? "selected" : ""}>${esc(a.name)}${a.sub ? " (abbonamento)" : ""}</option>`).join("")}</select></div>${(it => it && !it.sub ? `<div class="grid2"><div class="field"><label for="sCov">Mesi coperti</label><input id="sCov" class="inp mono" inputmode="numeric" value="${esc(String(st.covers ?? perMonths(it)))}"></div>${(it.share ?? 100) < 100 ? `<label class="row sm" style="gap:8px;cursor:pointer;align-self:end;padding-bottom:10px"><input type="checkbox" id="sFull" ${st.full !== false ? "checked" : ""}>Importo della bolletta intera · registro il ${it.share}%</label>` : ""}</div>` : "")((S.cfg.annual || []).find(a => a.id === st.annId))}` : ""}
     <div class="grid2"><div class="field"><label for="sDate">Data</label><input id="sDate" class="inp" type="date" value="${esc(st.date)}"></div>
       <div class="field"><label for="sTag">Tag</label><input id="sTag" class="inp" list="tagList" placeholder="es. Londra" value="${esc(st.tag)}"><datalist id="tagList">${tags.map(t => `<option value="${esc(t)}">`).join("")}</datalist></div></div>
     <div class="field"><label for="sNote">Nota</label><input id="sNote" class="inp" placeholder="${isInc ? (src?.kind === "extra" ? "es. Vinted, giacca" : "es. fattura n. 12") : "es. pranzo con colleghi"}" value="${esc(st.note)}">${st.catAuto && st.cat ? `<p class="xs muted" id="sRule" style="margin-top:4px">${ic("check")} Categoria scelta da ${esc(st.catAuto)}</p>` : `<p class="xs muted" id="sRule" style="margin-top:4px" hidden></p>`}</div>
@@ -1571,7 +1582,7 @@ function ruleFor(note) {
 function readSheetInputs() {
   const st = sheetState; if (!st) return;
   st.amountStr = $("#sAmt")?.value ?? st.amountStr; st.date = $("#sDate")?.value || st.date; st.note = $("#sNote")?.value ?? st.note;
-  st.tag = ($("#sTag")?.value ?? st.tag).trim().replace(/^#/, ""); if ($("#sAnn")) st.annId = $("#sAnn").value;
+  st.tag = ($("#sTag")?.value ?? st.tag).trim().replace(/^#/, ""); if ($("#sAnn")) st.annId = $("#sAnn").value; if ($("#sCov")) st.covers = $("#sCov").value; st.full = $("#sFull") ? $("#sFull").checked : st.full;
 }
 async function saveSheet() {
   readSheetInputs(); const st = sheetState; const amt = parseAmt(st.amountStr);
@@ -1585,6 +1596,8 @@ async function saveSheet() {
     if (!st.cat) return toast("Scegli una categoria");
     if (st.cat === "fondo" && !st.annId) return toast("Scegli quale spesa annuale");
     Object.assign(doc, {cat:st.cat, amount:r2(amt)}); if (st.cat === "fondo") doc.annId = st.annId;
+    if (st.cat === "fondo") { const it = (S.cfg.annual || []).find(a => a.id === st.annId); if (it && !it.sub) { const cv = parseInt(st.covers, 10); if (cv > 0) doc.covers = cv;
+      if ((it.share ?? 100) < 100 && st.full !== false && !st.id) { doc.billTotal = r2(amt); doc.amount = r2(amt * (it.share ?? 100) / 100); } else if (st.billTotal && st.id) doc.billTotal = st.billTotal; } }
     if (st.from && canFrom(st) && isPot(catById(st.from))) doc.from = st.from;
     if (st.recId) doc.recId = st.recId;
   }
@@ -1675,7 +1688,7 @@ function drawFund() {
       <div class="stats"><div class="card stat"><div class="l">Accantonato</div><div class="v mono">${eur0(f.accrued)}</div></div><div class="card stat"><div class="l">Pagato</div><div class="v mono">${eur0(f.paid)}</div></div><div class="card stat"><div class="l">Disponibile</div><div class="v mono" style="color:${f.avail < 0 ? "var(--destructive)" : "var(--success)"}">${eur0(f.avail)}</div></div></div>
       <div class="card"><div class="card-c flush">${list.length ? list.map(a => {
         const p = paidYr(a.id);
-        const nr = nextRenew(a); const sub = [`${eur(a.amount)} ${freqOf(perMonths(a)).per}`, (a.share ?? 100) !== 100 ? `tua quota ${a.share}%` : "", nr ? (a.renew ? (isExpired(a) ? "scaduta il " : "scade il ") + fmtDateS(nr) : "scade a " + mLong(nr.slice(0, 7))) : ""].filter(Boolean).join(" · ");
+        const L = learned(a), nr = nextRenew(a); const sub = [L.n ? `stima ${eur0(L.annual)}/anno da ${L.n} ${L.n === 1 ? "bolletta" : "bollette"}` : `${eur(a.amount)} ${freqOf(perMonths(a)).per}`, (a.share ?? 100) !== 100 ? `tua quota ${a.share}%` : "", nr ? (a.renew ? (isExpired(a) ? "scaduta il " : "scade il ") + fmtDateS(nr) : "scade a " + mLong(nr.slice(0, 7))) : ""].filter(Boolean).join(" · ");
         return `<button class="trow" data-act="fund-edit" data-id="${esc(a.id)}" style="grid-template-columns:minmax(0,1fr) auto"><div class="grow"><div class="t1 row" style="gap:6px"><span style="overflow:hidden;text-overflow:ellipsis">${esc(a.name)}</span>${!(Number(a.amount) > 0) ? `<span class="badge bd-warning">importo da inserire</span>` : ""}${p ? `<span class="badge bd-success">pagato ${eur0(p)}</span>` : ""}</div><div class="t2">${esc(sub)}</div></div><div class="am mono">${eur(accrualOf(a))}<span class="muted xs">/mese</span></div></button>`;
       }).join(`<div class="sep"></div>`) : `<div class="empty">Nessuna voce. Aggiungi la prima.</div>`}</div></div>
       <div class="dfoot"><button class="btn b-default" data-act="fund-new">${ic("plus")}Aggiungi voce</button><span class="grow"></span><button class="btn b-outline" data-act="fund-close">Chiudi</button></div>`;
@@ -1690,13 +1703,15 @@ function drawFund() {
     <div class="grid2"><div class="field"><label for="fAmt">Importo ${fq.per} €</label><input id="fAmt" class="inp mono" inputmode="decimal" placeholder="0,00" value="${esc(a.amountStr)}"></div>
       <div class="field"><label for="fShare">Tua quota %</label><input id="fShare" class="inp mono" inputmode="numeric" value="${esc(a.shareStr)}"></div></div>
     <div class="field"><label for="fRenew">Prossima scadenza</label><input id="fRenew" class="inp" type="date" value="${esc(a.renew || "")}"></div>
+    <div class="field"><label for="fLearn">Conta le bollette pagate dal</label><input id="fLearn" class="inp" type="date" value="${esc(a.learnFrom || "")}"><span class="xs muted">Per esempio da quando sei nella casa nuova: le bollette di prima non contano per la stima.</span></div>
+    ${(() => { const it = (S.cfg.annual || []).find(x => x.id === a.id); if (!it) return ""; const L = learned(it); return L.n ? `<div class="card"><div class="card-c stack sm" style="gap:6px"><div class="between"><span class="muted">Stima iniziale</span><span class="mono">${eur(L.est)}/anno</span></div><div class="between"><span class="muted">Pagato (${L.n} ${L.n === 1 ? "bolletta" : "bollette"}, ${L.covered} mesi)</span><span class="mono">${eur(L.paid)}</span></div><div class="between"><b>Stima aggiornata</b><b class="mono">${eur(L.annual)}/anno · ${eur(L.annual / 12)}/mese</b></div></div></div>` : ""; })()}
     <label class="row sm" style="gap:8px;cursor:pointer"><input type="checkbox" id="fAsk" ${a.ask ? "checked" : ""}>Alla scadenza chiedimi se è pagata e se l'importo è cambiato</label>
-    <div class="card"><div class="card-c between sm"><span class="muted">Accantonamento al mese</span><b class="mono" id="fMonthly">${eur((isFinite(amt) ? amt : 0) * ((isFinite(sh) ? sh : 100) / 100) / fq.m)}</b></div></div>
+    <div class="card"><div class="card-c between sm"><span class="muted">Accantonamento al mese (stima iniziale)</span><b class="mono" id="fMonthly">${eur((isFinite(amt) ? amt : 0) * ((isFinite(sh) ? sh : 100) / 100) / fq.m)}</b></div></div>
     <p class="xs muted">La quota serve per le spese che dividi (es. 50% per le bollette). Con la scadenza l'app ti avvisa nei due mesi prima e, se lo chiedi, il giorno stesso.</p>
     <div class="dfoot">${a.isNew ? "" : `<button class="btn ${fundState.confirmDel ? "b-destructive" : "b-dghost"}" data-act="fund-del">${ic("trash")}${fundState.confirmDel ? "Conferma" : "Elimina"}</button>`}<span class="grow"></span><button class="btn b-outline" data-act="fund-back">Annulla</button><button class="btn b-default" data-act="fund-save" id="fSave">Salva</button></div>`;
   if (a.isNew) setTimeout(() => $("#fName")?.focus(), 40);
 }
-function readFundInputs() { const a = fundState?.item; if (!a || !$("#fName")) return; a.name = $("#fName").value; a.amountStr = $("#fAmt").value; a.shareStr = $("#fShare").value; a.renew = $("#fRenew").value; a.ask = $("#fAsk").checked; }
+function readFundInputs() { const a = fundState?.item; if (!a || !$("#fName")) return; a.name = $("#fName").value; a.amountStr = $("#fAmt").value; a.shareStr = $("#fShare").value; a.renew = $("#fRenew").value; a.ask = $("#fAsk").checked; a.learnFrom = $("#fLearn").value; }
 async function saveFundItem() {
   readFundInputs(); const a = fundState.item;
   const name = a.name.trim(), amount = parseAmt(a.amountStr || "0"), share = a.shareStr === "" ? 100 : Number(a.shareStr);
@@ -1705,7 +1720,7 @@ async function saveFundItem() {
   if (!isFinite(share) || share < 0 || share > 100) return toast("La quota va da 0 a 100");
   const cfg = structuredClone(S.cfg); cfg.annual = cfg.annual || [];
   const renew = /^\d{4}-\d{2}-\d{2}$/.test(a.renew || "") ? a.renew : null;
-  const item = {id:a.id, name, amount:r2(amount), share, months:Number(a.months) || 12, renew, auto:!a.ask, due:renew ? Number(renew.slice(5, 7)) : (Number(a.due) || null)};
+  const item = {id:a.id, name, amount:r2(amount), share, months:Number(a.months) || 12, renew, auto:!a.ask, learnFrom:/^\d{4}-\d{2}-\d{2}$/.test(a.learnFrom || "") ? a.learnFrom : null, due:renew ? Number(renew.slice(5, 7)) : (Number(a.due) || null)};
   const i = cfg.annual.findIndex(x => x.id === a.id);
   if (i >= 0) cfg.annual[i] = {...cfg.annual[i], ...item}; else cfg.annual.push(item);
   $("#fSave").disabled = true;
@@ -1799,7 +1814,7 @@ async function renewSub() {
     if (x.pay) { const d = todayISO(), m1 = freqOf(x.freq).m === 1;
       const paidThisMonth = m1 && S.month === curMonth() && S.tx.some(t => t.recId === x.id);
       if (!paidThisMonth) await S.db.collection("tx").doc().set(m1 ? {kind:"exp", cat:SUBCAT, amount:r2(amount), date:d, month:d.slice(0, 7), note:x.name, tag:"", recId:x.id, created:Date.now()}
-        : {kind:"exp", cat:"fondo", annId:x.id, amount:r2(amount), date:d, month:d.slice(0, 7), note:"Rinnovo " + x.name, tag:"", created:Date.now()}); }
+        : (() => { const it = (S.cfg.annual || []).find(y => y.id === x.id), sh = (it?.share ?? 100) / 100; return {kind:"exp", cat:"fondo", annId:x.id, amount:r2(amount * sh), ...(sh < 1 ? {billTotal:r2(amount)} : {}), covers:freqOf(x.freq).m, date:d, month:d.slice(0, 7), note:(x.fund ? "" : "Rinnovo ") + x.name, tag:"", created:Date.now()}; })()); }
     closeSubs(); render(); toast(`${x.name} rinnovato fino al ${fmtDate(x.renew)}`);
   } catch (e) { fail(e); const b = $("#abSave"); if (b) b.disabled = false; }
 }
@@ -1899,7 +1914,7 @@ document.addEventListener("click", async e => {
   if (act === "fund-close") return closeFund();
   if (act === "fund-back") { fundState = {mode:"list"}; return drawFund(); }
   if (act === "fund-new") { fundState = {mode:"edit", item:{id:"ann_" + Math.random().toString(36).slice(2, 8), isNew:true, name:"", amountStr:"", shareStr:"100", months:12, renew:"", ask:true}}; return drawFund(); }
-  if (act === "fund-edit") { const x = (S.cfg.annual || []).find(y => y.id === a.dataset.id); if (!x) return; if (isExpired(x)) { closeFund(); const st = renewState(x.id); if (st) openSubs(st); return; } fundState = {mode:"edit", item:{id:x.id, name:x.name, amountStr:String(x.amount ?? 0).replace(".", ","), shareStr:String(x.share ?? 100), months:perMonths(x), renew:x.renew || nextRenew(x) || "", due:x.due || "", ask:!autoOf(x)}}; return drawFund(); }
+  if (act === "fund-edit") { const x = (S.cfg.annual || []).find(y => y.id === a.dataset.id); if (!x) return; if (isExpired(x)) { closeFund(); const st = renewState(x.id); if (st) openSubs(st); return; } fundState = {mode:"edit", item:{id:x.id, name:x.name, amountStr:String(x.amount ?? 0).replace(".", ","), shareStr:String(x.share ?? 100), months:perMonths(x), renew:x.renew || nextRenew(x) || "", due:x.due || "", ask:!autoOf(x), learnFrom:x.learnFrom || ""}}; return drawFund(); }
   if (act === "fund-open-edit") { openFund(); const x = (S.cfg.annual || []).find(y => y.id === a.dataset.id); if (x) document.querySelector(`#fund [data-act="fund-edit"][data-id="${a.dataset.id}"]`)?.click(); return; }
   if (act === "fund-freq") { readFundInputs(); fundState.item.months = Number(a.dataset.v); return drawFund(); }
   if (act === "fund-save") return saveFundItem();
@@ -2013,6 +2028,7 @@ document.addEventListener("change", e => {
   if (e.target.closest?.("#cld") && e.target.type === "checkbox") { readClose(); drawClose(); return; }
   if (e.target.id === "abAuto" && subState?.item && $("#abHint")) { readSubInputs(); $("#abHint").innerHTML = subHint(subState.item); }
   if (e.target.id === "fcat") { S.catFilter = e.target.value; render(); }
+  if (e.target.id === "sAnn" && sheetState) { readSheetInputs(); sheetState.covers = undefined; drawSheet(); }
   if (e.target.id === "ftag") { if (e.target.value) openTag(e.target.value); }
   if ((e.target.id === "backupFile" || e.target.id === "backupFile0") && e.target.files?.[0]) { const f = e.target.files[0]; f.text().then(async txt => { try { const n = await window.__cloud.importBackup(JSON.parse(txt)); S.trendCache = null; toast(`Importati ${n} elementi`); } catch (er) { console.error(er); toast("File di backup non valido"); } e.target.value = ""; }); }
   if (e.target.id === "restMin") { const v = Math.max(0, parseAmt(e.target.value) || 0); const cfg = structuredClone(S.cfg); cfg.restMin = r2(v); S.cfg = cfg; render(); S.db.doc("config/main").set(cfg).then(() => toast("Minimo impostato a " + eur0(v))).catch(fail); }
