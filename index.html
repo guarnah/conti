@@ -151,6 +151,10 @@ svg.i{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-widt
 .crow .nm{font-weight:500;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .crow .vl{font-size:13px;color:var(--muted-foreground);white-space:nowrap}
 .crow .vl b{color:var(--foreground);font-weight:500}
+.cr2{gap:6px;padding:9px 12px}
+.cr2 .prog{height:5px}
+.cr2 .lft{font-family:var(--font-sans);font-size:11.5px;margin-right:8px;color:var(--muted-foreground)}
+.recbar .card-c{padding-block:12px}
 .sep{height:1px;background:var(--border);margin:0 12px}
 
 /* group dot */
@@ -690,10 +694,11 @@ function viewMese() {
   `;
   const rec = (S.cfg.recurring || []).filter(x => !S.tx.some(t => t.recId === x.id));
   if (rec.length && S.txLoaded && S.month <= curMonth() && started(S.month)) {
-    h += `<div class="card"><div class="card-h"><div><div class="card-t">Ricorrenti da registrare</div><div class="card-d">${rec.length} ${rec.length === 1 ? "voce" : "voci"} di questo mese</div></div><button class="btn b-default b-sm" data-act="rec-all">${ic("check")}Registra tutte</button></div><div class="card-c flush">` +
+    const recTot = rec.reduce((a, x) => a + (Number(x.amount) || 0), 0);
+    h += `<div class="card recbar"><div class="card-c between" style="gap:10px;flex-wrap:wrap"><button class="row grow" data-act="rec-toggle" style="all:unset;cursor:pointer;display:flex;align-items:center;gap:10px;min-width:0"><span class="ava g-ess" style="width:30px;height:30px">${ic("repeat")}</span><span><span style="font-weight:500">${rec.length} ${rec.length === 1 ? "ricorrente" : "ricorrenti"} da registrare</span> <span class="muted sm mono">· ${eur(recTot)}</span></span></button><div class="row" style="gap:6px"><button class="btn b-ghost b-sm" data-act="rec-toggle">${S.recOpen ? "Nascondi" : "Vedi"}</button><button class="btn b-default b-sm" data-act="rec-all">${ic("check")}Registra tutte</button></div></div>` + (!S.recOpen ? `</div>` : `<div class="card-c flush" style="padding-top:0">` +
       (() => { const rs = rec.filter(x => x.cat === SUBCAT), other = rec.filter(x => x.cat !== SUBCAT);
         const grp = rs.length ? `<div class="trow" style="cursor:default;grid-template-columns:36px minmax(0,1fr) auto auto"><div class="ava g-ext">${ic("repeat")}</div><button class="grow" data-act="open-subs" style="all:unset;cursor:pointer;min-width:0"><div class="t1">Abbonamenti</div><div class="t2">${esc(rs.map(x => x.name).join(", "))}</div></button><div class="am mono">${eur(rs.reduce((a, x) => a + (Number(x.amount) || 0), 0))}</div><button class="btn b-outline b-sm" data-act="rec-subs">Registra</button></div>` : "";
-        return other.map(x => `<div class="trow" style="cursor:default;grid-template-columns:36px minmax(0,1fr) auto auto"><div class="ava g-${catById(x.cat)?.group || "ess"}">${ic("repeat")}</div><div class="grow"><div class="t1">${esc(x.name)}</div><div class="t2">${esc(catById(x.cat)?.name || "")}</div></div><div class="am mono">${eur(x.amount)}</div><button class="btn b-outline b-sm" data-act="rec-one" data-id="${esc(x.id)}">Registra</button></div>`).join("") + grp; })() + `</div></div>`;
+        return other.map(x => `<div class="trow" style="cursor:default;grid-template-columns:36px minmax(0,1fr) auto auto"><div class="ava g-${catById(x.cat)?.group || "ess"}">${ic("repeat")}</div><div class="grow"><div class="t1">${esc(x.name)}</div><div class="t2">${esc(catById(x.cat)?.name || "")}</div></div><div class="am mono">${eur(x.amount)}</div><button class="btn b-outline b-sm" data-act="rec-one" data-id="${esc(x.id)}">Registra</button></div>`).join("") + grp; })() + `</div></div>`);
   }
   let fundHtml = "";
   if ((S.cfg.annual || []).length) {
@@ -713,16 +718,17 @@ function viewMese() {
     if (!rows.length && !accRow) { h += potsMini() + `</div>`; continue; }
     const gb = rows.reduce((a, x) => a + x.b, 0) + (accRow ? r.acc : 0), gs = rows.reduce((a, x) => a + x.s, 0) + (accRow ? r.acc : 0);
     h += `<div class="card"><div class="card-h"><div><div class="card-t row"><span class="gd g-${g.id}"></span>${g.name}</div><div class="card-d">${g.d}</div></div><span class="badge bd-secondary mono">${eur0(gs)} / ${eur0(gb)}</span></div><div class="card-c flush">`;
-    if (accRow) h += `<button class="crow" data-act="open-fund">
+    if (accRow) h += `<button class="crow cr2" data-act="open-fund" title="Tasse, quote, utenze e auto divise per 12 · tocca per vedere e modificare le voci">
         <div class="between"><span class="row grow"><span class="nm">Spese annuali</span><span class="badge bd-outline">${(S.cfg.annual || []).filter(a => !a.sub).length} voci</span></span><span class="vl mono"><b>${eur0(r.acc)}</b>${r.acc ? "" : " · da " + esc(mShort(S.cfg.startMonth || curMonth()))}</span></div>
         <div class="prog"><i style="width:${r.acc ? 100 : 0}%;background:var(--muted-foreground)"></i></div>
-        <div class="xs muted">Tasse, quote, utenze e auto divise per 12 · tocca per vedere e modificare le voci</div></button>${rows.length ? `<div class="sep"></div>` : ""}`;
+        </button>${rows.length ? `<div class="sep"></div>` : ""}`;
+    const over = x => x.s - x.b > 0.5 ? x.s - x.b : 0;
+    rows.sort((a, b) => (over(b) > 0) - (over(a) > 0) || over(b) - over(a));
     h += rows.map(x => {
       const st = x.b <= 0 ? (x.s > 0 ? ["bd-destructive", "fuori budget"] : null) : x.s > x.b ? ["bd-destructive", "+" + eur0(x.s - x.b)] : (r.isCur && !x.c.fixed && x.proj > x.b * 1.02) ? ["bd-warning", "verso " + eur0(x.proj)] : null;
-      return `<button class="crow" data-act="${isAuto(x.c) ? "open-subs" : "filter-cat"}" data-id="${esc(x.c.id)}">
-        <div class="between"><span class="row grow"><span class="nm">${esc(x.c.name)}</span>${st ? `<span class="badge ${st[0]} mono">${esc(st[1])}</span>` : ""}</span><span class="vl mono"><b>${eur0(x.s)}</b> / ${eur0(x.b)}</span></div>
-        ${progHtml(x.s, x.b, r.isCur && !x.c.fixed ? x.proj : 0)}
-        <div class="xs muted">${x.left >= 0 ? `Restano <span class="mono">${eur(x.left)}</span>` : `Oltre di <span class="mono">${eur(-x.left)}</span>`}</div></button>`;
+      return `<button class="crow cr2" data-act="${isAuto(x.c) ? "open-subs" : "filter-cat"}" data-id="${esc(x.c.id)}" title="${esc(x.left >= 0 ? `Restano ${eur(x.left)}` : `Oltre di ${eur(-x.left)}`)}">
+        <div class="between"><span class="row grow" style="min-width:0"><span class="nm">${esc(x.c.name)}</span>${st ? `<span class="badge ${st[0]} mono">${esc(st[1])}</span>` : ""}</span><span class="vl mono">${x.left > 0.5 && !st ? `<span class="lft">resta ${eur0(x.left)}</span>` : ""}<b>${eur0(x.s)}</b> / ${eur0(x.b)}</span></div>
+        ${progHtml(x.s, x.b, r.isCur && !x.c.fixed ? x.proj : 0)}</button>`;
     }).join(`<div class="sep"></div>`);
     h += `</div></div>`;
     if (g.id === "ris") h += potsMini() + `</div>`;
@@ -1495,6 +1501,7 @@ document.addEventListener("click", async e => {
   if (act === "s-del") { if (!sheetState.confirmDel) { readSheetInputs(); sheetState.confirmDel = true; return drawSheet(); } try { await S.db.doc("tx/" + sheetState.id).delete(); closeSheet(); toast("Movimento eliminato"); } catch (er) { fail(er); } return; }
   if (act === "edit") { const t = S.tx.find(x => x.id === a.dataset.id) || (S.tagTx || []).find(x => x.id === a.dataset.id) || S.expTx.find(x => x.id === a.dataset.id); if (t) openSheet(t); return; }
   if (act === "cat-mode") { S.catMode = a.dataset.v; render(); return; }
+  if (act === "rec-toggle") { S.recOpen = !S.recOpen; render(); return; }
   if (act === "goto-budget") { S.view = "budget"; window.scrollTo(0, 0); render(); return; }
   if (act === "filter-cat") { S.catFilter = a.dataset.id; S.tagFilter = ""; S.unsubTag?.(); S.tagView = ""; S.tagTx = null; S.view = "movimenti"; window.scrollTo(0, 0); render(); return; }
   if (act === "rec-one" || act === "rec-all" || act === "rec-subs") {
