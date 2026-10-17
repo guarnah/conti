@@ -174,6 +174,7 @@ svg.i{width:16px;height:16px;flex:none;stroke:currentColor;fill:none;stroke-widt
 .simf{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .sim{display:flex;flex-direction:column;gap:16px}
 .sim-stats{grid-template-columns:repeat(3,minmax(0,1fr))}
+@media (max-width:480px){.hide-xs{display:none}}
 .qgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
 .qtile{display:flex;flex-direction:column;align-items:flex-start;gap:8px;padding:10px 11px;min-height:62px;border:1px solid var(--border);border-radius:var(--radius);background:var(--card);color:var(--foreground);font:inherit;font-size:13px;font-weight:500;text-align:left;cursor:pointer;line-height:1.25}
 .qtile span:last-child{overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
@@ -511,7 +512,14 @@ const EXTRA = {id:"extra", name:"Entrata extra", pct:100, kind:"extra"};
 const srcById = id => (S.cfg?.sources || []).find(s => s.id === id) || (id === "extra" ? EXTRA : undefined);
 const isExtraSrc = id => srcById(id)?.kind === "extra";
 const annualById = id => (S.cfg?.annual || []).find(a => a.id === id);
-const mineA = a => (Number(a.amount) || 0) * ((a.share ?? 100) / 100);
+/* quota personale di una spesa in una data: l'ultima variazione con data <= giorno, altrimenti la quota base */
+function shareAt(a, d = todayISO()) {
+  const k = Object.keys(a.shareChanges || {}).filter(x => x <= d).sort().pop();
+  return k ? Number(a.shareChanges[k]) : (a.share ?? 100);
+}
+const mineA = a => (Number(a.amount) || 0) * (shareAt(a) / 100);
+/* bollette di casa: segnate come tali, oppure riconosciute dal nome */
+const isBill = a => !a.sub && (a.bill ?? /luce|energia|gas|acqua|condomin|tari|rifiut|riscald/i.test(a.name || ""));
 const started = m => !!(S.cfg?.startMonth && m >= S.cfg.startMonth);
 /* accantonamento delle spese annuali che NON sono abbonamenti (riga "Spese annuali") */
 /* durata del periodo: 12 per le spese annuali, 3/6/12 per gli abbonamenti non mensili */
@@ -524,8 +532,13 @@ function learned(a) {
   if (a.sub) return {annual:est, paid:0, covered:0, n:0, est};
   const since = [learnFrom(a), addDaysISO(todayISO(), -365)].sort().pop();
   const tx = (S.fundTx || []).filter(t => t.annId === a.id && (t.date || "") >= since);
-  const paid = tx.reduce((s, t) => s + (Number(t.amount) || 0), 0), covered = Math.min(12, tx.reduce((s, t) => s + (Number(t.covers) || perMonths(a)), 0));
-  return {annual:covered >= 12 ? paid * 12 / Math.max(12, tx.reduce((s, t) => s + (Number(t.covers) || perMonths(a)), 0)) : paid + est * (12 - covered) / 12, paid, covered, n:tx.length, est};
+  /* si ragiona sulle bollette intere, poi si applica la quota di oggi: se la quota cambia (es. mesi a Milano) la stima segue subito */
+  const full = t => Number(t.billTotal) || (Number(t.amount) || 0) / Math.max(0.01, shareAt(a, t.date) / 100);
+  const sh = shareAt(a) / 100, estFull = (Number(a.amount) || 0) * 12 / perMonths(a);
+  const paidFull = tx.reduce((s, t) => s + full(t), 0), cov = tx.reduce((s, t) => s + (Number(t.covers) || perMonths(a)), 0), covered = Math.min(12, cov);
+  const annualFull = cov >= 12 ? paidFull * 12 / cov : paidFull + estFull * (12 - covered) / 12;
+  const paid = tx.reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  return {annual:annualFull * sh, annualFull, paid, paidFull, covered, n:tx.length, est, last:tx.sort((x, y) => (y.date || "").localeCompare(x.date || ""))[0]};
 }
 const accrualOf = a => learned(a).annual / 12;
 const FREQS = [{m:1, n:"Mensile", per:"al mese"}, {m:2, n:"Bimestrale", per:"ogni 2 mesi"}, {m:3, n:"Trimestrale", per:"ogni 3 mesi"}, {m:6, n:"Semestrale", per:"ogni 6 mesi"}, {m:12, n:"Annuale", per:"l'anno"}];
@@ -830,9 +843,16 @@ function viewMese() {
         const grp = rs.length ? `<div class="trow" style="cursor:default;grid-template-columns:36px minmax(0,1fr) auto auto"><div class="ava g-ext">${ic("repeat")}</div><button class="grow" data-act="open-subs" style="all:unset;cursor:pointer;min-width:0"><div class="t1">Abbonamenti</div><div class="t2">${esc(rs.map(x => x.name).join(", "))}</div></button><div class="am mono">${eur(rs.reduce((a, x) => a + (Number(x.amount) || 0), 0))}</div><button class="btn b-outline b-sm" data-act="rec-subs">Registra</button></div>` : "";
         return other.map(x => `<div class="trow" style="cursor:default;grid-template-columns:36px minmax(0,1fr) auto auto"><div class="ava g-${catById(x.cat)?.group || "ess"}">${ic("repeat")}</div><div class="grow"><div class="t1">${esc(x.name)}</div><div class="t2">${esc(catById(x.cat)?.name || "")}</div></div><div class="am mono">${eur(x.amount)}</div><button class="btn b-outline b-sm" data-act="rec-one" data-id="${esc(x.id)}">Registra</button></div>`).join("") + grp; })() + `</div></div>`);
   }
+  let billsHtml = "";
+  { const bl = (S.cfg.annual || []).filter(isBill);
+    if (bl.length) { const fb = fundStatus("bills"), tot = bl.reduce((s0, a) => s0 + accrualOf(a), 0);
+      billsHtml = `<div class="card"><div class="card-h"><div><div class="card-t row"><span class="gd g-ess"></span>Bollette di casa</div><div class="card-d"><span class="mono">${eur(tot)}</span> al mese per la tua parte · si aggiorna con ogni bolletta</div></div><button class="btn b-ghost b-sm" data-act="open-bills">Gestisci</button></div>
+        <div class="card-c flush" style="padding-top:0">${bl.sort((a, b) => accrualOf(b) - accrualOf(a)).map(a => { const L = learned(a), nr = nextRenew(a), sh = shareAt(a), nx = Object.keys(a.shareChanges || {}).filter(d => d > todayISO()).sort()[0];
+          return `<div class="trow" style="cursor:default;grid-template-columns:36px minmax(0,1fr) auto auto"><div class="ava g-ess">${ic(/luce|energia/i.test(a.name) ? "bolt" : /gas|riscald/i.test(a.name) ? "fuel" : /acqua/i.test(a.name) ? "pulse" : /condomin/i.test(a.name) ? "home" : "receipt")}</div><button class="grow" data-act="bill-open" data-id="${esc(a.id)}" style="all:unset;cursor:pointer;min-width:0"><div class="t1">${esc(a.name)}</div><div class="t2">${esc([L.last ? `ultima ${eur0(L.last.billTotal || L.last.amount)} il ${fmtDateS(L.last.date)}` : "nessuna bolletta registrata", sh < 100 ? `tua quota ${sh}%` : "", nx ? `${a.shareChanges[nx]}% dal ${fmtDateS(nx)}` : "", nr ? "prossima " + fmtDateS(nr) : ""].filter(Boolean).join(" · "))}</div></button><div class="am mono">${eur(accrualOf(a))}<span class="muted xs">/mese</span></div><button class="btn b-outline b-sm" data-act="bill-pay" data-id="${esc(a.id)}" aria-label="Registra bolletta ${esc(a.name)}">${ic("plus")}<span class="hide-xs">Registra</span></button></div>`; }).join("")}</div>
+        <div class="card-c" style="padding-top:0"><div class="between sm"><span class="muted">Accantonato ${eur0(fb.accrued)} · pagato ${eur0(fb.paid)}</span><b class="mono" style="color:${fb.avail < 0 ? "var(--destructive)" : "var(--success)"}">${fb.avail < 0 ? "−" : "+"}${eur0(Math.abs(fb.avail))}</b></div></div></div>`; } }
   let fundHtml = "";
-  if ((S.cfg.annual || []).length) {
-    const f = fundStatus();
+  if ((S.cfg.annual || []).some(a => !isBill(a))) {
+    const f = fundStatus("annual");
     fundHtml = `<div class="card"><div class="card-h"><div><div class="card-t row"><span class="gd g-fondo"></span>Fondo spese annuali</div><div class="card-d">Accantoni <span class="mono">${eur(monthlyAccrualAll())}</span> al mese (abbonamenti annuali inclusi), già conteggiati nelle uscite</div></div><span class="muted">${ic("piggy")}</span></div>
       <div class="card-c stack" style="gap:12px">
       <div class="stats"><div class="stat" style="padding:0"><div class="l">Accantonato</div><div class="v mono">${eur0(f.accrued)}</div></div><div class="stat" style="padding:0"><div class="l">Pagato</div><div class="v mono">${eur0(f.paid)}</div></div><div class="stat" style="padding:0"><div class="l">Disponibile</div><div class="v mono" style="color:${f.avail < 0 ? "var(--destructive)" : "var(--success)"}">${eur0(f.avail)}</div></div></div>
@@ -848,10 +868,10 @@ function viewMese() {
     if (!rows.length && !accRow) { h += potsMini() + `</div>`; continue; }
     const gb = rows.reduce((a, x) => a + x.b, 0) + (accRow ? r.acc : 0), gs = rows.reduce((a, x) => a + x.s, 0) + (accRow ? r.acc : 0);
     h += `<div class="card"><div class="card-h"><div><div class="card-t row"><span class="gd g-${g.id}"></span>${g.name}</div><div class="card-d">${g.d}</div></div><span class="badge bd-secondary mono">${eur0(gs)} / ${eur0(gb)}</span></div><div class="card-c flush">`;
-    if (accRow) h += `<button class="crow cr2" data-act="open-fund" title="Tasse, quote, utenze e auto divise per 12 · tocca per vedere e modificare le voci">
-        <div class="between"><span class="row grow"><span class="cic g-fondo">${ic("cal")}</span><span class="nm">Spese annuali</span><span class="badge bd-outline">${(S.cfg.annual || []).filter(a => !a.sub).length} voci</span></span><span class="vl mono"><b>${eur0(r.acc)}</b>${r.acc ? "" : " · da " + esc(mShort(S.cfg.startMonth || curMonth()))}</span></div>
-        <div class="prog"><i style="width:${r.acc ? 100 : 0}%;background:var(--muted-foreground)"></i></div>
-        </button>${rows.length ? `<div class="sep"></div>` : ""}`;
+    if (accRow) { const bl = (S.cfg.annual || []).filter(isBill), bAcc = started(S.month) ? bl.reduce((s0, a) => s0 + accrualOf(a), 0) : 0, oAcc = r.acc - bAcc;
+      const accLine = (act, icn, name, n, v, tip) => `<button class="crow cr2" data-act="${act}" title="${tip}"><div class="between"><span class="row grow"><span class="cic g-fondo">${ic(icn)}</span><span class="nm">${name}</span><span class="badge bd-outline">${n} voci</span></span><span class="vl mono"><b>${eur0(v)}</b>${r.acc ? "" : " · da " + esc(mShort(S.cfg.startMonth || curMonth()))}</span></div><div class="prog"><i style="width:${v ? 100 : 0}%;background:var(--muted-foreground)"></i></div></button>`;
+      h += (bl.length ? accLine("open-bills", "bolt", "Bollette", bl.length, bAcc, "Quota mensile delle bollette di casa, ricalcolata dalle bollette pagate · tocca per vederle") + `<div class="sep"></div>` : "")
+        + accLine("open-fund", "cal", "Spese annuali", (S.cfg.annual || []).filter(a => !a.sub && !isBill(a)).length, oAcc, "Tasse, quote, assicurazioni e auto divise per 12 · tocca per vedere e modificare le voci") + (rows.length ? `<div class="sep"></div>` : ""); }
     const over = x => x.s - x.b > 0.5 ? x.s - x.b : 0;
     rows.sort((a, b) => (over(b) > 0) - (over(a) > 0) || over(b) - over(a));
     h += rows.map(x => {
@@ -862,20 +882,24 @@ function viewMese() {
     }).join(`<div class="sep"></div>`);
     h += `</div></div>`;
     if (g.id === "ris") h += potsMini() + `</div>`;
-    if (g.id === "ess") h += (fundHtml ? `<div class="wide-only">${fundHtml}</div>` : "") + `</div>`;
+    if (g.id === "ess") h += (billsHtml ? `<div class="wide-only">${billsHtml}</div>` : "") + (fundHtml ? `<div class="wide-only">${fundHtml}</div>` : "") + `</div>`;
   }
   h += `</div>`;
+  if (billsHtml) h += `<div class="narrow-only">${billsHtml}</div>`;
   if (fundHtml) h += `<div class="narrow-only">${fundHtml}</div>`;
   return h;
 }
 
-function fundStatus() {
+/* stato del fondo: kind "bills" = solo bollette (dalla data da cui contano), "annual" = il resto, nulla = tutto */
+function fundStatus(kind) {
   const start = S.cfg.startMonth || curMonth(); const now = curMonth();
   const n = now >= start ? monthDiff(start, now) + 1 : 0;
-  const accrued = (Number(S.cfg.fundInitial) || 0) + monthlyAccrualAll() * n;
-  const paid = S.fundTx.reduce((a, t) => a + (Number(t.amount) || 0), 0);
+  const items = (S.cfg.annual || []).filter(a => kind === "bills" ? isBill(a) : kind === "annual" ? !isBill(a) : true), ids = new Set(items.map(a => a.id));
+  const months = a => { const f = learnFrom(a).slice(0, 7), s0 = f > start ? f : start; return now >= s0 ? monthDiff(s0, now) + 1 : 0; };
+  const accrued = (kind === "bills" ? 0 : Number(S.cfg.fundInitial) || 0) + (kind ? items.reduce((s, a) => s + accrualOf(a) * (kind === "bills" ? months(a) : n), 0) : monthlyAccrualAll() * n);
+  const paid = S.fundTx.filter(t => !kind || (kind === "bills" ? ids.has(t.annId) : !(S.cfg.annual || []).some(a => a.id === t.annId && isBill(a)))).reduce((a, t) => a + (Number(t.amount) || 0), 0);
   const yr = now.slice(0, 4);
-  const upcoming = (S.cfg.annual || []).filter(a => a.due || a.renew).map(a => {
+  const upcoming = items.filter(a => a.due || a.renew).map(a => {
     if (a.renew) { const n = nextRenew(a); return {...a, dueM:n.slice(0, 7), dueD:n, paidYr:subPaidNow(a), mine:mineA(a)}; }
     let dueM = `${yr}-${pad(a.due)}`; if (dueM < now) dueM = addMonth(dueM, 12);
     const paidYr = S.fundTx.some(t => t.annId === a.id && t.month && t.month.slice(0, 4) === dueM.slice(0, 4));
@@ -1339,7 +1363,7 @@ function viewAltro() {
   <div class="sec" data-sec="rules">${tblCard("rules", "Regole automatiche", "Se la nota di una spesa contiene il testo, la categoria si sceglie da sola", [["La nota contiene"], ["Categoria"], [""]], c.rules || [], ROW.rules, "Aggiungi regola", `<p class="xs muted" style="margin-top:10px">Esempi: "esselunga" → Spesa alimentare, "q8" → Carburante. Non conta maiuscole e minuscole. Se nessuna regola corrisponde, l'app usa la categoria dell'ultima spesa con la stessa nota.</p>`)}</div>
   <div class="sec" data-sec="general"><div class="card"><div class="card-h"><div><div class="card-t">Aspetto</div><div class="card-d">Vale solo per questo dispositivo</div></div></div><div class="card-c"><div class="tlist" role="tablist" aria-label="Tema" style="width:auto;display:inline-grid">${[["auto", "Automatico"], ["light", "Chiaro"], ["dark", "Scuro"]].map(([k, n]) => `<button class="tab" role="tab" data-act="set-theme" data-v="${k}" aria-selected="${k === th}">${n}</button>`).join("")}</div></div></div></div>
   <div class="sec" data-sec="annual">
-  <div class="card"><div class="card-h"><div><div class="card-t">Spese annuali</div><div class="card-d">Accantonate ogni mese nel fondo · totale <span class="mono">${eur(monthlyAccrualAll())}</span>/mese, abbonamenti inclusi</div></div><button class="btn b-default b-sm" data-act="open-fund">${ic("sliders")}Gestisci voci</button></div>
+  <div class="card"><div class="card-h"><div><div class="card-t">Spese annuali</div><div class="card-d">Accantonate ogni mese nel fondo · totale <span class="mono">${eur(monthlyAccrualAll())}</span>/mese, abbonamenti inclusi</div></div><button class="btn b-default b-sm" data-act="open-fund" data-k="all">${ic("sliders")}Gestisci voci</button></div>
   <div class="card-c flush" style="padding-top:0">${(c.annual || []).filter(a => !a.sub).map(a => { const nr = nextRenew(a); return `<button class="trow" data-act="fund-open-edit" data-id="${esc(a.id)}" style="grid-template-columns:36px minmax(0,1fr) auto"><div class="ava g-fondo">${ic("receipt")}</div><div class="grow"><div class="t1">${esc(a.name)}</div><div class="t2">${esc([eur(a.amount) + " " + freqOf(perMonths(a)).per, (a.share ?? 100) !== 100 ? `tua quota ${a.share}%` : "", nr ? "scade il " + fmtDateS(nr) : "scadenza da inserire"].filter(Boolean).join(" · "))}</div></div><div class="am mono">${eur(accrualOf(a))}<span class="muted xs">/mese</span></div></button>`; }).join("")}</div>
   <div class="card-c"><div class="grid2"><div class="field"><label for="fundInitial">Saldo iniziale del fondo</label><input class="inp" id="fundInitial" inputmode="decimal" value="${esc(String(c.fundInitial || 0).replace(".", ","))}"></div><div class="field"><label for="startMonth">Accantona a partire da</label><input class="inp" id="startMonth" type="month" value="${esc(c.startMonth || curMonth())}"></div></div>
     <p class="xs muted" style="margin-top:10px">Per aggiungere o modificare una voce (importo, frequenza, scadenza) tocca la voce o "Gestisci voci".</p></div></div>
@@ -1538,7 +1562,7 @@ function drawSheet(focus) {
           ${open ? `<div class="togs" style="margin-top:8px">${rest.map(c => `<button class="tog" data-s="cat" data-v="${esc(c.id)}" aria-pressed="${st.cat === c.id}"><span class="gd g-${c.group}"></span>${esc(c.name)}</button>`).join("")}<button class="tog" data-s="cat" data-v="fondo" aria-pressed="${st.cat === "fondo"}"><span class="gd g-fondo"></span>Spesa annuale</button></div>` : `<button class="btn b-ghost b-sm" data-act="s-more" style="margin-top:6px;align-self:flex-start">Altre categorie (${rest.length + 1})</button>`}<div>`; })()}
     </div></div>
     ${canFrom(st) ? `<div class="field"><span class="lab">Pagata con</span><div class="togs" role="group" aria-label="Pagata con"><button class="tog" data-s="from" data-v="" aria-pressed="${!st.from}">Budget del mese</button>${pots().map(c => `<button class="tog" data-s="from" data-v="${esc(c.id)}" aria-pressed="${st.from === c.id}"><span class="gd g-ris"></span>${esc(c.name)} <span class="mono muted">${eur0(potAvailFor(st, c.id))}</span></button>`).join("")}</div><p class="xs muted" id="sFrom">${fromHint(st)}</p></div>` : ""}
-    ${!isInc && st.cat === "fondo" ? `<div class="field"><label for="sAnn">Quale spesa annuale?</label><select id="sAnn" class="inp"><option value="">Scegli…</option>${(S.cfg.annual || []).map(a => `<option value="${esc(a.id)}" ${st.annId === a.id ? "selected" : ""}>${esc(a.name)}${a.sub ? " (abbonamento)" : ""}</option>`).join("")}</select></div>${(it => it && !it.sub ? `<div class="grid2"><div class="field"><label for="sCov">Mesi coperti</label><input id="sCov" class="inp mono" inputmode="numeric" value="${esc(String(st.covers ?? perMonths(it)))}"></div>${(it.share ?? 100) < 100 ? `<label class="row sm" style="gap:8px;cursor:pointer;align-self:end;padding-bottom:10px"><input type="checkbox" id="sFull" ${st.full !== false ? "checked" : ""}>Importo della bolletta intera · registro il ${it.share}%</label>` : ""}</div>` : "")((S.cfg.annual || []).find(a => a.id === st.annId))}` : ""}
+    ${!isInc && st.cat === "fondo" ? `<div class="field"><label for="sAnn">Quale spesa annuale?</label><select id="sAnn" class="inp"><option value="">Scegli…</option>${(S.cfg.annual || []).map(a => `<option value="${esc(a.id)}" ${st.annId === a.id ? "selected" : ""}>${esc(a.name)}${a.sub ? " (abbonamento)" : ""}</option>`).join("")}</select></div>${(it => it && !it.sub ? `<div class="grid2"><div class="field"><label for="sCov">Mesi coperti</label><input id="sCov" class="inp mono" inputmode="numeric" value="${esc(String(st.covers ?? perMonths(it)))}"></div>${shareAt(it, st.date) < 100 ? `<label class="row sm" style="gap:8px;cursor:pointer;align-self:end;padding-bottom:10px"><input type="checkbox" id="sFull" ${st.full !== false ? "checked" : ""}>Importo della bolletta intera · registro il ${shareAt(it, st.date)}%</label>` : ""}</div>` : "")((S.cfg.annual || []).find(a => a.id === st.annId))}` : ""}
     <div class="grid2"><div class="field"><label for="sDate">Data</label><input id="sDate" class="inp" type="date" value="${esc(st.date)}"></div>
       <div class="field"><label for="sTag">Tag</label><input id="sTag" class="inp" list="tagList" placeholder="es. Londra" value="${esc(st.tag)}"><datalist id="tagList">${tags.map(t => `<option value="${esc(t)}">`).join("")}</datalist></div></div>
     <div class="field"><label for="sNote">Nota</label><input id="sNote" class="inp" placeholder="${isInc ? (src?.kind === "extra" ? "es. Vinted, giacca" : "es. fattura n. 12") : "es. pranzo con colleghi"}" value="${esc(st.note)}">${st.catAuto && st.cat ? `<p class="xs muted" id="sRule" style="margin-top:4px">${ic("check")} Categoria scelta da ${esc(st.catAuto)}</p>` : `<p class="xs muted" id="sRule" style="margin-top:4px" hidden></p>`}</div>
@@ -1597,7 +1621,7 @@ async function saveSheet() {
     if (st.cat === "fondo" && !st.annId) return toast("Scegli quale spesa annuale");
     Object.assign(doc, {cat:st.cat, amount:r2(amt)}); if (st.cat === "fondo") doc.annId = st.annId;
     if (st.cat === "fondo") { const it = (S.cfg.annual || []).find(a => a.id === st.annId); if (it && !it.sub) { const cv = parseInt(st.covers, 10); if (cv > 0) doc.covers = cv;
-      if ((it.share ?? 100) < 100 && st.full !== false && !st.id) { doc.billTotal = r2(amt); doc.amount = r2(amt * (it.share ?? 100) / 100); } else if (st.billTotal && st.id) doc.billTotal = st.billTotal; } }
+      const sh = shareAt(it, st.date); if (sh < 100 && st.full !== false && !st.id) { doc.billTotal = r2(amt); doc.amount = r2(amt * sh / 100); } else if (st.billTotal && st.id) doc.billTotal = st.billTotal; } }
     if (st.from && canFrom(st) && isPot(catById(st.from))) doc.from = st.from;
     if (st.recId) doc.recId = st.recId;
   }
@@ -1666,8 +1690,8 @@ async function deletePot() {
 
 /* ---------- drawer fondo spese annuali ---------- */
 let fundState = null;
-function openFund() {
-  fundState = {mode:"list"};
+function openFund(kind) {
+  S.fundKind = kind || null; fundState = {mode:"list"};
   const bg = document.createElement("div"); bg.className = "ovl"; bg.id = "fundBg";
   bg.innerHTML = `<div class="drawer" role="dialog" aria-modal="true" aria-labelledby="fTitle" id="fund"></div>`;
   document.body.appendChild(bg); document.body.style.overflow = "hidden";
@@ -1682,10 +1706,11 @@ function drawFund() {
   const mine = a => (Number(a.amount) || 0) * ((a.share ?? 100) / 100);
   if (fundState.mode === "list") {
     const f = fundStatus();
-    const list = [...(S.cfg.annual || [])].filter(a => !a.sub).sort((a, b) => mine(b) - mine(a));
+    const K = S.fundKind, f2 = fundStatus(K || undefined), list = [...(S.cfg.annual || [])].filter(a => !a.sub && (K === "bills" ? isBill(a) : K === "annual" ? !isBill(a) : true)).sort((a, b) => accrualOf(b) - accrualOf(a));
+    const accM = list.reduce((s0, a) => s0 + accrualOf(a), 0);
     el.innerHTML = `<div class="handle-zone"><div class="handle"></div></div>
-      <div class="between"><div><h2 id="fTitle" style="font-size:17px;font-weight:600">Accantonamento spese annuali</h2><p class="muted sm"><span class="mono">${eur(monthlyAccrual())}</span> al mese · <span class="mono">${eur0(monthlyAccrual() * 12)}</span> all'anno · gli abbonamenti annuali sono in Abbonamenti</p></div><button class="btn b-ghost b-icon b-sm" data-act="fund-close" aria-label="Chiudi">${ic("x")}</button></div>
-      <div class="stats"><div class="card stat"><div class="l">Accantonato</div><div class="v mono">${eur0(f.accrued)}</div></div><div class="card stat"><div class="l">Pagato</div><div class="v mono">${eur0(f.paid)}</div></div><div class="card stat"><div class="l">Disponibile</div><div class="v mono" style="color:${f.avail < 0 ? "var(--destructive)" : "var(--success)"}">${eur0(f.avail)}</div></div></div>
+      <div class="between"><div><h2 id="fTitle" style="font-size:17px;font-weight:600">${K === "bills" ? "Bollette di casa" : "Accantonamento spese annuali"}</h2><p class="muted sm"><span class="mono">${eur(accM)}</span> al mese · <span class="mono">${eur0(accM * 12)}</span> all'anno${K === "bills" ? " · la tua quota" : " · gli abbonamenti sono in Abbonamenti"}</p></div><button class="btn b-ghost b-icon b-sm" data-act="fund-close" aria-label="Chiudi">${ic("x")}</button></div>
+      <div class="stats"><div class="card stat"><div class="l">Accantonato</div><div class="v mono">${eur0(f2.accrued)}</div></div><div class="card stat"><div class="l">Pagato</div><div class="v mono">${eur0(f2.paid)}</div></div><div class="card stat"><div class="l">Disponibile</div><div class="v mono" style="color:${f2.avail < 0 ? "var(--destructive)" : "var(--success)"}">${eur0(f2.avail)}</div></div></div>
       <div class="card"><div class="card-c flush">${list.length ? list.map(a => {
         const p = paidYr(a.id);
         const L = learned(a), nr = nextRenew(a); const sub = [L.n ? `stima ${eur0(L.annual)}/anno da ${L.n} ${L.n === 1 ? "bolletta" : "bollette"}` : `${eur(a.amount)} ${freqOf(perMonths(a)).per}`, (a.share ?? 100) !== 100 ? `tua quota ${a.share}%` : "", nr ? (a.renew ? (isExpired(a) ? "scaduta il " : "scade il ") + fmtDateS(nr) : "scade a " + mLong(nr.slice(0, 7))) : ""].filter(Boolean).join(" · ");
@@ -1703,6 +1728,9 @@ function drawFund() {
     <div class="grid2"><div class="field"><label for="fAmt">Importo ${fq.per} €</label><input id="fAmt" class="inp mono" inputmode="decimal" placeholder="0,00" value="${esc(a.amountStr)}"></div>
       <div class="field"><label for="fShare">Tua quota %</label><input id="fShare" class="inp mono" inputmode="numeric" value="${esc(a.shareStr)}"></div></div>
     <div class="field"><label for="fRenew">Prossima scadenza</label><input id="fRenew" class="inp" type="date" value="${esc(a.renew || "")}"></div>
+    <div class="grid2"><div class="field"><label for="fNs">Nuova tua quota %</label><input id="fNs" class="inp mono" inputmode="numeric" placeholder="—" value="${esc(a.ns || "")}"></div><div class="field"><label for="fNsFrom">Dal</label><input id="fNsFrom" class="inp" type="date" value="${esc(a.nsFrom || "")}"></div></div>
+    ${Object.keys(a.shareChanges || {}).length ? `<div class="xs muted">Quote programmate: ${Object.entries(a.shareChanges).sort().map(([d, v]) => `${v}% dal ${esc(fmtDate(d))} <button class="btn b-dghost b-sm" data-act="fund-unshare" data-d="${esc(d)}" style="height:22px;padding:0 6px">togli</button>`).join(" · ")}</div>` : ""}
+    <label class="row sm" style="gap:8px;cursor:pointer"><input type="checkbox" id="fBill" ${a.bill ? "checked" : ""}>È una bolletta di casa (compare nella sezione Bollette)</label>
     <div class="field"><label for="fLearn">Conta le bollette pagate dal</label><input id="fLearn" class="inp" type="date" value="${esc(a.learnFrom || "")}"><span class="xs muted">Per esempio da quando sei nella casa nuova: le bollette di prima non contano per la stima.</span></div>
     ${(() => { const it = (S.cfg.annual || []).find(x => x.id === a.id); if (!it) return ""; const L = learned(it); return L.n ? `<div class="card"><div class="card-c stack sm" style="gap:6px"><div class="between"><span class="muted">Stima iniziale</span><span class="mono">${eur(L.est)}/anno</span></div><div class="between"><span class="muted">Pagato (${L.n} ${L.n === 1 ? "bolletta" : "bollette"}, ${L.covered} mesi)</span><span class="mono">${eur(L.paid)}</span></div><div class="between"><b>Stima aggiornata</b><b class="mono">${eur(L.annual)}/anno · ${eur(L.annual / 12)}/mese</b></div></div></div>` : ""; })()}
     <label class="row sm" style="gap:8px;cursor:pointer"><input type="checkbox" id="fAsk" ${a.ask ? "checked" : ""}>Alla scadenza chiedimi se è pagata e se l'importo è cambiato</label>
@@ -1711,7 +1739,7 @@ function drawFund() {
     <div class="dfoot">${a.isNew ? "" : `<button class="btn ${fundState.confirmDel ? "b-destructive" : "b-dghost"}" data-act="fund-del">${ic("trash")}${fundState.confirmDel ? "Conferma" : "Elimina"}</button>`}<span class="grow"></span><button class="btn b-outline" data-act="fund-back">Annulla</button><button class="btn b-default" data-act="fund-save" id="fSave">Salva</button></div>`;
   if (a.isNew) setTimeout(() => $("#fName")?.focus(), 40);
 }
-function readFundInputs() { const a = fundState?.item; if (!a || !$("#fName")) return; a.name = $("#fName").value; a.amountStr = $("#fAmt").value; a.shareStr = $("#fShare").value; a.renew = $("#fRenew").value; a.ask = $("#fAsk").checked; a.learnFrom = $("#fLearn").value; }
+function readFundInputs() { const a = fundState?.item; if (!a || !$("#fName")) return; a.name = $("#fName").value; a.amountStr = $("#fAmt").value; a.shareStr = $("#fShare").value; a.renew = $("#fRenew").value; a.ask = $("#fAsk").checked; a.learnFrom = $("#fLearn").value; a.bill = $("#fBill").checked; a.ns = $("#fNs").value; a.nsFrom = $("#fNsFrom").value; }
 async function saveFundItem() {
   readFundInputs(); const a = fundState.item;
   const name = a.name.trim(), amount = parseAmt(a.amountStr || "0"), share = a.shareStr === "" ? 100 : Number(a.shareStr);
@@ -1720,7 +1748,8 @@ async function saveFundItem() {
   if (!isFinite(share) || share < 0 || share > 100) return toast("La quota va da 0 a 100");
   const cfg = structuredClone(S.cfg); cfg.annual = cfg.annual || [];
   const renew = /^\d{4}-\d{2}-\d{2}$/.test(a.renew || "") ? a.renew : null;
-  const item = {id:a.id, name, amount:r2(amount), share, months:Number(a.months) || 12, renew, auto:!a.ask, learnFrom:/^\d{4}-\d{2}-\d{2}$/.test(a.learnFrom || "") ? a.learnFrom : null, due:renew ? Number(renew.slice(5, 7)) : (Number(a.due) || null)};
+  const sc = {...(a.shareChanges || {})}; const nsv = Number(a.ns); if (a.ns !== "" && /^\d{4}-\d{2}-\d{2}$/.test(a.nsFrom || "") && isFinite(nsv) && nsv >= 0 && nsv <= 100) sc[a.nsFrom] = nsv;
+  const item = {id:a.id, name, amount:r2(amount), share, shareChanges:sc, bill:!!a.bill, months:Number(a.months) || 12, renew, auto:!a.ask, learnFrom:/^\d{4}-\d{2}-\d{2}$/.test(a.learnFrom || "") ? a.learnFrom : null, due:renew ? Number(renew.slice(5, 7)) : (Number(a.due) || null)};
   const i = cfg.annual.findIndex(x => x.id === a.id);
   if (i >= 0) cfg.annual[i] = {...cfg.annual[i], ...item}; else cfg.annual.push(item);
   $("#fSave").disabled = true;
@@ -1814,7 +1843,7 @@ async function renewSub() {
     if (x.pay) { const d = todayISO(), m1 = freqOf(x.freq).m === 1;
       const paidThisMonth = m1 && S.month === curMonth() && S.tx.some(t => t.recId === x.id);
       if (!paidThisMonth) await S.db.collection("tx").doc().set(m1 ? {kind:"exp", cat:SUBCAT, amount:r2(amount), date:d, month:d.slice(0, 7), note:x.name, tag:"", recId:x.id, created:Date.now()}
-        : (() => { const it = (S.cfg.annual || []).find(y => y.id === x.id), sh = (it?.share ?? 100) / 100; return {kind:"exp", cat:"fondo", annId:x.id, amount:r2(amount * sh), ...(sh < 1 ? {billTotal:r2(amount)} : {}), covers:freqOf(x.freq).m, date:d, month:d.slice(0, 7), note:(x.fund ? "" : "Rinnovo ") + x.name, tag:"", created:Date.now()}; })()); }
+        : (() => { const it = (S.cfg.annual || []).find(y => y.id === x.id), sh = (it ? shareAt(it) : 100) / 100; return {kind:"exp", cat:"fondo", annId:x.id, amount:r2(amount * sh), ...(sh < 1 ? {billTotal:r2(amount)} : {}), covers:freqOf(x.freq).m, date:d, month:d.slice(0, 7), note:(x.fund ? "" : "Rinnovo ") + x.name, tag:"", created:Date.now()}; })()); }
     closeSubs(); render(); toast(`${x.name} rinnovato fino al ${fmtDate(x.renew)}`);
   } catch (e) { fail(e); const b = $("#abSave"); if (b) b.disabled = false; }
 }
@@ -1893,7 +1922,7 @@ document.addEventListener("click", async e => {
   if (act === "pot-del") return deletePot();
   if (act === "goto-pot-settings") { S.potView = ""; S.view = "altro"; window.scrollTo(0, 0); render(); setTimeout(() => document.querySelector('tr[data-row="pot"]')?.closest(".card")?.scrollIntoView({block:"start"}), 50); return; }
   if (act === "close-pot") { S.potView = ""; S.view = "salvadanai"; S.enter = "fade"; window.scrollTo(0, 0); render(); return; }
-  if (act === "open-fund") return openFund();
+  if (act === "open-fund") return openFund(a.dataset.k || "annual");
   if (act === "open-subs") return openSubs();
   if (act === "subs-close") return closeSubs();
   if (act === "subs-back") { subState = {mode:"list"}; return drawSubs(); }
@@ -1913,9 +1942,13 @@ document.addEventListener("click", async e => {
   if (act === "subs-movs") { closeSubs(); S.catFilter = SUBCAT; S.tagFilter = ""; S.unsubTag?.(); S.tagView = ""; S.tagTx = null; S.view = "movimenti"; window.scrollTo(0, 0); render(); return; }
   if (act === "fund-close") return closeFund();
   if (act === "fund-back") { fundState = {mode:"list"}; return drawFund(); }
-  if (act === "fund-new") { fundState = {mode:"edit", item:{id:"ann_" + Math.random().toString(36).slice(2, 8), isNew:true, name:"", amountStr:"", shareStr:"100", months:12, renew:"", ask:true}}; return drawFund(); }
-  if (act === "fund-edit") { const x = (S.cfg.annual || []).find(y => y.id === a.dataset.id); if (!x) return; if (isExpired(x)) { closeFund(); const st = renewState(x.id); if (st) openSubs(st); return; } fundState = {mode:"edit", item:{id:x.id, name:x.name, amountStr:String(x.amount ?? 0).replace(".", ","), shareStr:String(x.share ?? 100), months:perMonths(x), renew:x.renew || nextRenew(x) || "", due:x.due || "", ask:!autoOf(x), learnFrom:x.learnFrom || ""}}; return drawFund(); }
+  if (act === "fund-new") { const b = S.fundKind === "bills"; fundState = {mode:"edit", item:{id:"ann_" + Math.random().toString(36).slice(2, 8), isNew:true, name:"", amountStr:"", shareStr:"100", months:b ? 2 : 12, renew:"", ask:!b, bill:b, learnFrom:""}}; return drawFund(); }
+  if (act === "fund-edit") { const x = (S.cfg.annual || []).find(y => y.id === a.dataset.id); if (!x) return; if (isExpired(x)) { closeFund(); const st = renewState(x.id); if (st) openSubs(st); return; } fundState = {mode:"edit", item:{id:x.id, name:x.name, amountStr:String(x.amount ?? 0).replace(".", ","), shareStr:String(x.share ?? 100), months:perMonths(x), renew:x.renew || nextRenew(x) || "", due:x.due || "", ask:!autoOf(x), learnFrom:x.learnFrom || "", bill:isBill(x), shareChanges:{...(x.shareChanges || {})}, ns:"", nsFrom:""}}; return drawFund(); }
   if (act === "fund-open-edit") { openFund(); const x = (S.cfg.annual || []).find(y => y.id === a.dataset.id); if (x) document.querySelector(`#fund [data-act="fund-edit"][data-id="${a.dataset.id}"]`)?.click(); return; }
+  if (act === "bill-open") { openFund("bills"); document.querySelector(`#fund [data-act="fund-edit"][data-id="${a.dataset.id}"]`)?.click(); return; }
+  if (act === "fund-unshare") { readFundInputs(); delete fundState.item.shareChanges[a.dataset.d]; return drawFund(); }
+  if (act === "open-bills") return openFund("bills");
+  if (act === "bill-pay") { openSheet(null); Object.assign(sheetState, {cat:"fondo", annId:a.dataset.id || "", moreCats:true}); drawSheet(); setTimeout(() => $("#sAmt")?.focus(), 60); return; }
   if (act === "fund-freq") { readFundInputs(); fundState.item.months = Number(a.dataset.v); return drawFund(); }
   if (act === "fund-save") return saveFundItem();
   if (act === "fund-del") return deleteFundItem();
