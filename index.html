@@ -254,6 +254,11 @@ body[data-view="salvadanai"] .hdr .month{visibility:hidden}
 /* table */
 .tw{overflow-x:auto}
 .mlbl{display:none}
+.clopt{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius);cursor:pointer}
+.clopt.on{border-color:var(--foreground)}
+.clopt input{margin-top:3px;flex:none}
+.clopt>span{display:flex;flex-direction:column;gap:2px;min-width:0}
+.clopt .t{font-size:14px;font-weight:500}
 @media (max-width:700px){
   table.t-recurring thead{display:none}
   table.t-recurring,table.t-recurring tbody{display:block}
@@ -650,11 +655,22 @@ function recBudget(o, m = S.month) { // categorie con ricorrenti a periodo: budg
   dated.forEach(c => { o[c] = r2(rec.filter(x => x.cat === c && recActive(x, m)).reduce((a, x) => a + (Number(x.amount) || 0), 0)); });
   return o;
 }
+/* voci variabili: quelle che si possono tagliare per recuperare un mese andato in negativo */
+const isVarCat = c => !!c && !c.hidden && c.group !== "ris" && !c.fixed && !isAuto(c) && !isRest(c);
+function cutVar(o, g) { // toglie g € dalle voci variabili, in proporzione al loro budget, arrotondando a 5 €
+  const out = {...o}, ids = (S.cfg?.categories || []).filter(c => isVarCat(c) && Number(out[c.id]) > 0).map(c => c.id), tot = ids.reduce((a, id) => a + Number(out[id]), 0);
+  if (!(g > 0) || !tot) return out;
+  ids.forEach(id => { out[id] = Math.max(0, Math.round((Number(out[id]) - g * Number(out[id]) / tot) / 5) * 5); });
+  const goal = Math.max(0, tot - g); let sum = ids.reduce((a, id) => a + out[id], 0);
+  for (let i = 0; i < 200 && sum > goal + 2.5; i++) { const id = ids.reduce((a, b) => out[b] > out[a] ? b : a); if (out[id] < 5) break; out[id] -= 5; sum -= 5; } // arrotondamenti: si toglie almeno g
+  return out;
+}
+const applyRecover = (o, m = S.month) => { const g = Number(S.cfg?.recover?.[m]) || 0; return g > 0 ? cutVar(o, g) : o; };
 function budgetFor() {
   if (S.budget?.cats) return {cats:S.budget.cats, draft:false};
-  if (S.prevBudget?.cats) { const o = {...S.prevBudget.cats}; cats().forEach(c => { if (!(c.id in o) && Number(c.defaultBudget)) o[c.id] = Number(c.defaultBudget); }); return {cats:recBudget(o), draft:true, from:S.prevBudget.month}; }
+  if (S.prevBudget?.cats) { const o = {...S.prevBudget.cats}; cats().forEach(c => { if (!(c.id in o) && Number(c.defaultBudget)) o[c.id] = Number(c.defaultBudget); }); return {cats:applyRecover(recBudget(o)), draft:true, from:S.prevBudget.month}; }
   const o = {}; cats().forEach(c => o[c.id] = Number(c.defaultBudget) || 0);
-  return {cats:recBudget(o), draft:true, from:null};
+  return {cats:applyRecover(recBudget(o)), draft:true, from:null};
 }
 
 /* ---------- calcoli del mese ---------- */
@@ -1002,7 +1018,8 @@ function closeItems(m) {
 let closeState = null;
 function openClose(m) {
   const reserve = taxStatus().open.filter(d => d.pot === false && d.date <= addDaysISO(lastDay(addMonth(m, 1)), 0) && d.date > lastDay(m)).map(d => ({name:d.name, date:d.date, amount:Number(d.amount) || 0}));
-  closeState = {m, saldo:"", soglia:String(S.cfg.closeThreshold ?? 3000), reserve, items:closeItems(m), avanzoStr:null, step:1};
+  closeState = {m, saldo:"", soglia:String(S.cfg.closeThreshold ?? 3000), reserve, items:closeItems(m), avanzoStr:null, step:1, bud:null, budChoice:null};
+  loadCloseBudgets(closeState);
   const bg = document.createElement("div"); bg.className = "ovl"; bg.id = "clBg";
   bg.innerHTML = `<div class="drawer" role="dialog" aria-modal="true" aria-labelledby="clTitle" id="cld"></div>`;
   document.body.appendChild(bg); document.body.style.overflow = "hidden";
@@ -1010,6 +1027,63 @@ function openClose(m) {
   drawClose(); enableSwipeClose(bg, closeClose);
 }
 function closeClose() { closeOverlay("clBg"); closeState = null; }
+/* budget del mese che si chiude e di quello dopo, per proporre come impostare il prossimo */
+async function loadCloseBudgets(x) {
+  const next = addMonth(x.m, 1), defs = () => Object.fromEntries(cats().map(c => [c.id, Number(c.defaultBudget) || 0]));
+  try {
+    const [bm, bn] = await Promise.all([S.db.doc("budgets/" + x.m).get(), S.db.doc("budgets/" + next).get()]);
+    const cur = bm.exists ? bm.data().cats : x.m === S.month ? budgetFor().cats : (S.prevBudget?.cats || defs());
+    const nextSaved = bn.exists ? bn.data().cats : null;
+    const base = nextSaved ? {...nextSaved} : (() => { const o = {...cur}; cats().forEach(c => { if (!(c.id in o) && Number(c.defaultBudget)) o[c.id] = Number(c.defaultBudget); }); return recBudget(o, next); })();
+    if (restCat()) delete base[restCat()];
+    const r = computeMonth(S.expTx.filter(t => t.month === x.m), cur, x.m);
+    x.bud = {cur, nextSaved, base, r};
+  } catch (e) { console.warn(e); x.bud = {error:true}; }
+  if (closeState === x) { readClose(); drawClose(); }
+}
+/* quanto manca: col saldo scritto è il buco sotto la soglia, altrimenti quanto il mese è andato oltre le entrate */
+function closeGap() {
+  const x = closeState, c = closeCalc(), b = x.bud; if (!b || b.error) return {gap:0, cash:false, over:[], d:0};
+  const d = Math.max(0, b.r.spentTot - b.r.income), cash = c.ok ? Math.max(0, c.soglia + c.res + c.fixed - c.saldo) : null;
+  const over = b.r.rows.filter(y => isVarCat(y.c) && y.s > y.b + 0.5).sort((p, q) => (q.s - q.b) - (p.s - p.b));
+  return {gap:r2(cash != null ? cash : d), cash:cash != null, over, d};
+}
+function closeOptions() {
+  const x = closeState, b = x.bud; if (!b || b.error) return [];
+  const next = addMonth(x.m, 1), g = closeGap(), r5 = v => Math.round(v / 5) * 5, base = b.base;
+  const casa = x.items.find(i => i.on && i.cat === restCat() && i.amount > 0);
+  const real = (() => { const o = {...base}; b.r.rows.forEach(y => { if (isVarCat(y.c)) o[y.c.id] = r5(y.s); }); return o; })();
+  const avg = (() => { const o = {...base}; let n = 0; cats().forEach(c => { if (isVarCat(c)) { const v = avg3(c.id, next); if (v != null) { o[c.id] = r5(v); n++; } } }); return n ? o : null; })();
+  const opts = [];
+  if (g.gap > 0.5) {
+    if (casa) opts.push({k:"casa", t:`Versa meno nel ${casa.name.replace(/ \(minimo\)$/, "")}`, d:casa.amount >= g.gap ? `${eur0(casa.amount)} → ${eur0(casa.amount - g.gap)} a ${mLong(next)}: il budget delle spese resta uguale` : `Il versamento scende a 0 € (−${eur0(casa.amount)}) e i restanti ${eur0(g.gap - casa.amount)} si tolgono dalle spese variabili`, cats:casa.amount >= g.gap ? base : cutVar(base, g.gap - casa.amount), casa:Math.max(0, r2(casa.amount - g.gap))});
+    opts.push({k:"cut", t:`Taglia le spese variabili di ${mLong(next)}`, d:`${eur0(g.gap)} in meno, divisi tra le voci variabili in proporzione al loro budget`, cats:cutVar(base, g.gap)});
+    opts.push({k:"spread", t:"Recupera in 3 mesi", d:`${eur0(g.gap / 3)} in meno al mese sulle voci variabili, da ${mLong(next)} a ${mLong(addMonth(next, 2))}`, cats:cutVar(base, g.gap / 3), spread:r2(g.gap / 3)});
+    opts.push({k:"same", t:"Non cambiare il budget", d:g.cash ? `Il conto resta ${eur0(g.gap)} sotto la soglia: lo coprirai con le prossime entrate` : "Il disavanzo resta coperto dal margine sul conto", cats:base});
+  } else {
+    opts.push({k:"same", t:b.nextSaved ? `Tieni il budget già impostato per ${mLong(next)}` : `Stesso budget di ${mLong(x.m)}`, d:g.over.length ? "Anche se alcune voci sono state sforate" : "Il mese è andato come previsto", cats:base});
+    opts.push({k:"real", t:`Adegua alle spese reali di ${mLong(x.m)}`, d:"Ogni voce variabile prende quanto hai speso davvero, arrotondato a 5 €", cats:real});
+    if (avg) opts.push({k:"avg", t:"Usa la media degli ultimi 3 mesi", d:"Per le voci variabili, arrotondata a 5 €", cats:avg});
+  }
+  opts.push({k:"later", t:"Decido dopo", d:"Il budget lo imposti tu nella sezione Budget", cats:null});
+  return opts;
+}
+function closeBudHtml() {
+  const x = closeState, next = addMonth(x.m, 1);
+  if (!x.bud) return `<div class="xs muted">Carico il budget…</div>`;
+  if (x.bud.error) return `<div class="xs muted">Non riesco a leggere il budget: lo imposti dalla sezione Budget.</div>`;
+  const g = closeGap(), opts = closeOptions(), mode = g.gap > 0.5 ? "gap" : "ok"; if (x.budMode !== mode || !opts.some(o => o.k === x.budChoice)) { x.budMode = mode; x.budChoice = opts[0].k; }
+  const sel = opts.find(o => o.k === x.budChoice);
+  const head = g.gap > 0.5 ? `<div class="sm" style="color:var(--destructive)">${g.cash ? `Dopo i versamenti il conto resta <b class="mono">${eur0(g.gap)}</b> sotto la soglia` : `${esc(mLong(x.m))} è andato oltre le entrate di <b class="mono">${eur0(g.gap)}</b>`}. Come lo recuperi?</div>`
+    : g.over.length ? `<div class="sm muted">Sforate: ${g.over.slice(0, 3).map(y => `${esc(y.c.name)} <span class="mono" style="color:var(--destructive)">+${eur0(y.s - y.b)}</span>`).join(", ")}</div>` : `<div class="sm muted">Nessuna voce sforata.</div>`;
+  let prev = "";
+  if (sel?.cats) {
+    const ch = cats().filter(c => !isRest(c) && Math.abs((Number(sel.cats[c.id]) || 0) - (Number(x.bud.base[c.id]) || 0)) > 0.5);
+    const tv = o => cats().filter(isVarCat).reduce((a, c) => a + (Number(o[c.id]) || 0), 0);
+    prev = ch.length ? `<div class="card card-c stack" style="gap:4px;padding:10px 12px">${ch.slice(0, 8).map(c => `<div class="between xs"><span>${esc(c.name)}</span><span class="mono"><span class="muted">${eur0(Number(x.bud.base[c.id]) || 0)} →</span> ${eur0(Number(sel.cats[c.id]) || 0)}</span></div>`).join("")}${ch.length > 8 ? `<div class="xs muted">e altre ${ch.length - 8}</div>` : ""}<div class="sep" style="margin:3px 0"></div><div class="between xs"><span>Spese variabili</span><b class="mono">${eur0(tv(x.bud.base))} → ${eur0(tv(sel.cats))}</b></div></div>` : "";
+  }
+  return head + `<div class="stack" style="gap:6px" role="radiogroup" aria-label="Budget di ${esc(mLong(next))}">${opts.map(o => `<label class="clopt${o.k === x.budChoice ? " on" : ""}"><input type="radio" name="clBud" value="${o.k}" ${o.k === x.budChoice ? "checked" : ""}><span><span class="t">${esc(o.t)}</span><span class="xs muted">${esc(o.d)}</span></span></label>`).join("")}</div>` + prev;
+}
 function closeCalc() {
   const x = closeState, saldo = parseAmt(x.saldo), soglia = parseAmt(x.soglia) || 0, res = x.reserve.reduce((a, d) => a + d.amount, 0);
   const fixed = x.items.filter(i => i.on).reduce((a, i) => a + i.amount, 0);
@@ -1017,7 +1091,7 @@ function closeCalc() {
   const avanzo = x.avanzoStr != null && x.avanzoStr !== "" ? Math.max(0, parseAmt(x.avanzoStr) || 0) : auto;
   return {saldo, soglia, res, fixed, auto, avanzo, ok:isFinite(saldo)};
 }
-function readClose() { const x = closeState; if (!x) return; if ($("#clSaldo")) x.saldo = $("#clSaldo").value; if ($("#clSoglia")) x.soglia = $("#clSoglia").value; if ($("#clAv")) x.avanzoStr = $("#clAv").value === "" ? null : $("#clAv").value; document.querySelectorAll("#cld [data-cli]").forEach(r => { const it = x.items[Number(r.dataset.cli)]; it.on = r.querySelector("input[type=checkbox]").checked; const v = parseAmt(r.querySelector("[data-f=amt]").value); if (isFinite(v)) it.amount = v; }); }
+function readClose() { const x = closeState; if (!x) return; const rb = document.querySelector('#cld input[name=clBud]:checked'); if (rb) x.budChoice = rb.value; if ($("#clSaldo")) x.saldo = $("#clSaldo").value; if ($("#clSoglia")) x.soglia = $("#clSoglia").value; if ($("#clAv")) x.avanzoStr = $("#clAv").value === "" ? null : $("#clAv").value; document.querySelectorAll("#cld [data-cli]").forEach(r => { const it = x.items[Number(r.dataset.cli)]; it.on = r.querySelector("input[type=checkbox]").checked; const v = parseAmt(r.querySelector("[data-f=amt]").value); if (isFinite(v)) it.amount = v; }); }
 function drawClose() {
   const el = $("#cld"), x = closeState; if (!el || !x) return; const c = closeCalc(), next = addMonth(x.m, 1), rest = catById(restCat())?.name || "Salvadanaio";
   el.innerHTML = `<div class="handle-zone"><div class="handle"></div></div>
@@ -1030,9 +1104,15 @@ function drawClose() {
     <div class="clstep"><div class="cln">3</div><div class="stack grow" style="gap:8px"><div style="font-weight:600">Avanzo di ${esc(mLong(x.m))} → ${esc(rest)}</div>
       <div class="between sm"><span class="muted">Saldo − da tenere${c.res ? " − pagamenti dal conto" : ""} − versamenti</span><b class="mono">${c.ok ? eur(c.auto) : "—"}</b></div>
       <div class="field"><label for="clAv">Avanzo da spostare €</label><input id="clAv" class="inp mono" inputmode="decimal" placeholder="${c.ok ? esc(String(r2(c.auto)).replace(".", ",")) : "scrivi prima il saldo"}" value="${esc(x.avanzoStr ?? "")}"></div></div></div>
-    <div class="card card-c stack" style="gap:6px;padding:12px"><div class="xs muted">Bonifici da fare</div>${[...x.items.filter(i => i.on && i.amount > 0 && !i.auto).map(i => [i.name, i.amount]), ...(c.avanzo > 0 ? [[`${rest} (avanzo)`, c.avanzo]] : [])].map(([n, v]) => `<div class="between sm"><span>${esc(n)}</span><b class="mono">${eur(v)}</b></div>`).join("") || `<div class="sm muted">Nessuno</div>`}
-      <div class="sep" style="margin:4px 0"></div><div class="between sm"><span>Totale dal conto</span><b class="mono">${eur(c.fixed + c.avanzo)}</b></div>${x.items.some(i => i.on && i.auto) ? `<div class="xs muted">Compresi gli addebiti automatici, che si registrano ma non richiedono un bonifico.</div>` : ""}</div>
+    <div class="clstep"><div class="cln">4</div><div class="stack grow" style="gap:8px"><div style="font-weight:600">Budget di ${esc(mLong(next))}</div>${closeBudHtml()}</div></div>
+    <div class="card card-c stack" style="gap:6px;padding:12px"><div class="xs muted">Bonifici da fare</div>${[...closeFinalItems().filter(i => i.on && i.amount > 0 && !i.auto).map(i => [i.name, i.amount]), ...(c.avanzo > 0 ? [[`${rest} (avanzo)`, c.avanzo]] : [])].map(([n, v]) => `<div class="between sm"><span>${esc(n)}</span><b class="mono">${eur(v)}</b></div>`).join("") || `<div class="sm muted">Nessuno</div>`}
+      <div class="sep" style="margin:4px 0"></div><div class="between sm"><span>Totale dal conto</span><b class="mono">${eur(closeFinalItems().filter(i => i.on).reduce((a, i) => a + i.amount, 0) + c.avanzo)}</b></div>${x.items.some(i => i.on && i.auto) ? `<div class="xs muted">Compresi gli addebiti automatici, che si registrano ma non richiedono un bonifico.</div>` : ""}</div>
     <div class="dfoot"><span class="grow"></span><button class="btn b-outline" data-act="cl-close">Più tardi</button><button class="btn b-default" data-act="cl-save" id="clSave">${ic("check")}Registra e chiudi il mese</button></div>`;
+}
+/* versamenti definitivi: con "versa meno in casa" il versamento del salvadanaio casa si riduce */
+function closeFinalItems() {
+  const x = closeState, o = x.bud && !x.bud.error && x.budChoice === "casa" ? closeOptions().find(y => y.k === "casa") : null;
+  return o ? x.items.map(i => i.on && i.cat === restCat() && i.amount > 0 ? {...i, amount:o.casa} : i) : x.items;
 }
 async function saveClose() {
   readClose(); const x = closeState, c = closeCalc(), next = addMonth(x.m, 1), now = Date.now();
@@ -1040,12 +1120,15 @@ async function saveClose() {
   $("#clSave").disabled = true;
   try {
     let k = 0;
-    for (const it of x.items.filter(i => i.on && i.amount > 0)) await S.db.collection("tx").doc().set({kind:"exp", cat:it.cat, amount:r2(it.amount), date:next + "-01", month:next, note:it.name, tag:"", ...(it.recId ? {recId:it.recId} : {}), created:now + k++});
+    const opt = x.bud && !x.bud.error ? closeOptions().find(o => o.k === x.budChoice) : null, items = closeFinalItems();
+    for (const it of items.filter(i => i.on && i.amount > 0)) await S.db.collection("tx").doc().set({kind:"exp", cat:it.cat, amount:r2(it.amount), date:next + "-01", month:next, note:it.name, tag:"", ...(it.recId ? {recId:it.recId} : {}), created:now + k++});
     if (c.avanzo > 0 && restCat()) await S.db.collection("tx").doc().set({kind:"exp", cat:restCat(), amount:r2(c.avanzo), date:lastDay(x.m), month:x.m, note:"Avanzo di " + mLong(x.m), tag:"", created:now + k++});
-    const cfg = structuredClone(S.cfg); cfg.closed = {...(cfg.closed || {}), [x.m]:{date:todayISO(), avanzo:r2(c.avanzo), saldo:c.ok ? r2(c.saldo) : null}};
+    if (opt?.cats && !(opt.k === "same" && x.bud.nextSaved)) { const out = {}; for (const [kk, v] of Object.entries(opt.cats)) if (catById(kk) && kk !== restCat()) out[kk] = r2(Number(v) || 0); await S.db.doc("budgets/" + next).set({month:next, cats:out, saved:Date.now()}); }
+    const cfg = structuredClone(S.cfg); cfg.closed = {...(cfg.closed || {}), [x.m]:{date:todayISO(), avanzo:r2(c.avanzo), saldo:c.ok ? r2(c.saldo) : null, ...(opt ? {budget:opt.k} : {})}};
+    if (opt?.spread) cfg.recover = {...Object.fromEntries(Object.entries(cfg.recover || {}).filter(([mm]) => mm > next)), [addMonth(next, 1)]:opt.spread, [addMonth(next, 2)]:opt.spread};
     const th = parseAmt(x.soglia); if (isFinite(th)) cfg.closeThreshold = r2(th);
     await S.db.doc("config/main").set(cfg); S.cfg = cfg;
-    closeClose(); render(); toast(`${mLong(x.m)} chiuso · ${k} versamenti registrati`);
+    closeClose(); render(); toast(`${mLong(x.m)} chiuso · ${k} versamenti registrati${opt?.cats ? " · budget di " + mLong(next) + " impostato" : ""}`);
   } catch (e) { fail(e); const b = $("#clSave"); if (b) b.disabled = false; }
 }
 /* ---------- patrimonio: saldi dei conti a fine mese ---------- */
@@ -1382,9 +1465,9 @@ function marginHtml() {
 const budCatsFor = (budCats) => (S.cfg?.categories || []).filter(c => !c.hidden || Number(budCats?.[c.id]));
 function budgetTotal() { return budCatsFor(S.budgetDraft).reduce((a, c) => a + budOf(c, S.budgetDraft), 0) + accrualFor(S.month); }
 /* media mensile di una categoria nei 3 mesi prima di quello mostrato */
-function avg3(id) {
+function avg3(id, ref = S.month) {
   /* solo mesi già chiusi e registrati con le categorie dell'app (non quelli importati dall'Excel) */
-  const ms = [1, 2, 3].map(k => addMonth(S.month, -k)).filter(m => m < curMonth() && S.expTx.some(t => t.month === m) && !S.expTx.some(t => t.month === m && String(t.cat).startsWith("leg_")));
+  const ms = [1, 2, 3].map(k => addMonth(ref, -k)).filter(m => m < curMonth() && S.expTx.some(t => t.month === m) && !S.expTx.some(t => t.month === m && String(t.cat).startsWith("leg_")));
   if (!ms.length) return null;
   return S.expTx.filter(t => t.cat === id && !t.from && ms.includes(t.month)).reduce((a, t) => a + (Number(t.amount) || 0), 0) / ms.length;
 }
@@ -2138,7 +2221,7 @@ document.addEventListener("input", e => {
   if (t.id === "sAmt" && sheetState?.kind === "inc" && !isExtraSrc(sheetState.src)) { const src = srcById(sheetState.src); const n = $("#sNet"); const v = parseAmt(t.value); if (n && src) n.innerHTML = isFinite(v) ? `Netto (${src.pct}%) <b class="mono" style="color:var(--foreground)">${eur(v * src.pct / 100)}</b> · da mettere nella quota tasse <b class="mono" style="color:var(--foreground)">${eur(v * taxCfg().rate / 100)}</b>` : `Netto al ${src.pct}% del fatturato`; }
 });
 document.addEventListener("change", e => {
-  if (e.target.closest?.("#cld") && e.target.type === "checkbox") { readClose(); drawClose(); return; }
+  if (e.target.closest?.("#cld") && (e.target.type === "checkbox" || e.target.type === "radio")) { readClose(); drawClose(); return; }
   if (e.target.id === "abAuto" && subState?.item && $("#abHint")) { readSubInputs(); $("#abHint").innerHTML = subHint(subState.item); }
   if (e.target.id === "fcat") { S.catFilter = e.target.value; render(); }
   if (e.target.id === "nwRem") { saveNwRemind(e.target.value); return; }
