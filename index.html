@@ -674,10 +674,10 @@ function addVar(o, g) { // inverso di cutVar: rimette g € sulle voci variabili
 const unRecover = (o, m) => { const g = Number(S.cfg?.recover?.[m]) || 0; return g > 0 ? addVar(o, g) : o; }; // budget pieno di un mese ridotto per il recupero
 const applyRecover = (o, m = S.month) => { const g = Number(S.cfg?.recover?.[m]) || 0; return g > 0 ? cutVar(o, g) : o; };
 function budgetFor() {
-  if (S.budget?.cats) return {cats:S.budget.cats, draft:false};
-  if (S.prevBudget?.cats) { const o = unRecover(S.prevBudget.cats, S.prevBudget.month); cats().forEach(c => { if (!(c.id in o) && Number(c.defaultBudget)) o[c.id] = Number(c.defaultBudget); }); return {cats:applyRecover(recBudget(o)), draft:true, from:S.prevBudget.month}; }
+  if (S.budget?.cats) return {cats:S.budget.cats, full:S.budget.full || null, draft:false};
+  if (S.prevBudget?.cats) { const o = S.prevBudget.full ? {...S.prevBudget.full} : unRecover(S.prevBudget.cats, S.prevBudget.month); cats().forEach(c => { if (!(c.id in o) && Number(c.defaultBudget)) o[c.id] = Number(c.defaultBudget); }); const f = recBudget(o); return {cats:applyRecover(f), full:f, draft:true, from:S.prevBudget.month}; }
   const o = {}; cats().forEach(c => o[c.id] = Number(c.defaultBudget) || 0);
-  return {cats:applyRecover(recBudget(o)), draft:true, from:null};
+  const f = recBudget(o); return {cats:applyRecover(f), full:f, draft:true, from:null};
 }
 
 /* ---------- calcoli del mese ---------- */
@@ -1040,8 +1040,9 @@ async function loadCloseBudgets(x) {
   try {
     const [bm, bn] = await Promise.all([S.db.doc("budgets/" + x.m).get(), S.db.doc("budgets/" + next).get()]);
     const cur = bm.exists ? bm.data().cats : x.m === S.month ? budgetFor().cats : (S.prevBudget?.cats || defs());
+    const curFull = bm.exists && bm.data().full ? bm.data().full : unRecover(cur, x.m);
     const nextSaved = bn.exists ? bn.data().cats : null;
-    const base = nextSaved ? {...nextSaved} : (() => { const o = unRecover(cur, x.m); cats().forEach(c => { if (!(c.id in o) && Number(c.defaultBudget)) o[c.id] = Number(c.defaultBudget); }); return recBudget(o, next); })();
+    const base = nextSaved ? {...(bn.data().full || nextSaved)} : (() => { const o = {...curFull}; cats().forEach(c => { if (!(c.id in o) && Number(c.defaultBudget)) o[c.id] = Number(c.defaultBudget); }); return recBudget(o, next); })();
     if (restCat()) delete base[restCat()];
     const r = computeMonth(S.expTx.filter(t => t.month === x.m), cur, x.m);
     x.bud = {cur, nextSaved, base, r};
@@ -1064,8 +1065,8 @@ function closeDebtOptions() {
   const next = addMonth(x.m, 1), o = [];
   if (dt.est < dt.pending - 0.5) o.push(dt.est <= 0.5 ? {k:"settle", t:"Salda il debito", d:`L'avanzo di ${mLong(x.m)} copre i ${eur0(dt.pending)} rimasti: da ${mLong(next)} torni al budget pieno`}
     : {k:"settle", t:`Salda in parte: il debito scende a ${eur0(dt.est)}`, d:`L'avanzo di ${mLong(x.m)} copre ${eur0(dt.pending - dt.est)}; si tolgono prima le riduzioni dei mesi più vicini`});
-  if (dt.est > 0.5) o.push({k:"all", t:"Salda tutto adesso", d:`Torni subito al budget pieno; i ${eur0(dt.est)} che mancano li copri con il conto o con i risparmi`});
   o.push({k:"keep", t:"Continua il piano di recupero", d:dt.list.map(([k, v]) => `${mShort(k)} −${eur0(v)}`).join(" · ")});
+  if (dt.est > 0.5) o.push({k:"all", t:"Salda tutto adesso", d:`Torni subito al budget pieno; i ${eur0(dt.est)} che mancano li copri con il conto o con i risparmi`});
   return o;
 }
 function closeRecover() { // piano di recupero dopo la scelta sul debito (solo i mesi dopo quello che si chiude)
@@ -1090,8 +1091,8 @@ function closeOptions() {
   const avg = (() => { const o = {...base}; let n = 0; cats().forEach(c => { if (isVarCat(c)) { const v = avg3(c.id, next); if (v != null) { o[c.id] = r5(v); n++; } } }); return n ? o : null; })();
   const opts = [];
   if (g.gap > 0.5) {
-    if (casa) opts.push({k:"casa", t:`Versa meno nel ${casa.name.replace(/ \(minimo\)$/, "")}`, d:casa.amount >= g.gap ? `${eur0(casa.amount)} → ${eur0(casa.amount - g.gap)} a ${mLong(next)}: il budget delle spese resta uguale` : `Il versamento scende a 0 € (−${eur0(casa.amount)}) e i restanti ${eur0(g.gap - casa.amount)} si tolgono dalle spese variabili`, cats:casa.amount >= g.gap ? base : cutVar(base, g.gap - casa.amount), casa:Math.max(0, r2(casa.amount - g.gap))});
-    opts.push({k:"cut", t:`Taglia le spese variabili di ${mLong(next)}`, d:`${eur0(g.gap)} in meno, divisi tra le voci variabili in proporzione al loro budget`, cats:cutVar(base, g.gap)});
+    if (casa) opts.push({k:"casa", t:`Versa meno nel ${casa.name.replace(/ \(minimo\)$/, "")}`, d:casa.amount >= g.gap ? `${eur0(casa.amount)} → ${eur0(casa.amount - g.gap)} a ${mLong(next)}: il budget delle spese resta uguale` : `Il versamento scende a 0 € (−${eur0(casa.amount)}) e i restanti ${eur0(g.gap - casa.amount)} si tolgono dalle spese variabili`, cats:casa.amount >= g.gap ? base : cutVar(base, g.gap - casa.amount), planNext:Math.max(0, r2(g.gap - casa.amount)), full:base, casa:Math.max(0, r2(casa.amount - g.gap))});
+    opts.push({k:"cut", t:`Taglia le spese variabili di ${mLong(next)}`, d:`${eur0(g.gap)} in meno, divisi tra le voci variabili in proporzione al loro budget`, cats:cutVar(base, g.gap), planNext:g.gap, full:base});
     opts.push({k:"spread", t:"Recupera in 3 mesi", d:`${eur0(g.gap / 3)} in meno al mese sulle voci variabili, da ${mLong(next)} a ${mLong(addMonth(next, 2))}`, cats:base, spread:r2(g.gap / 3)});
     opts.push({k:"same", t:"Non cambiare il budget", d:g.cash ? `Il conto resta ${eur0(g.gap)} sotto la soglia: lo coprirai con le prossime entrate` : "Il disavanzo resta coperto dal margine sul conto", cats:base});
   } else {
@@ -1101,7 +1102,7 @@ function closeOptions() {
   }
   opts.push({k:"later", t:"Decido dopo", d:"Il budget lo imposti tu nella sezione Budget", cats:null});
   const recN = Number(closeRecover()[next]) || 0; // recupero già previsto per il mese dopo
-  opts.forEach(o => { const cut = recN + (o.spread || 0); if (o.cats && cut > 0) o.cats = cutVar(o.cats, cut); });
+  opts.forEach(o => { if (!o.cats) return; if (!o.full) o.full = o.cats; const cut = recN + (o.spread || 0); if (cut > 0) o.cats = cutVar(o.cats, cut); });
   return opts;
 }
 function closeBudHtml() {
@@ -1162,9 +1163,11 @@ async function saveClose() {
     for (const it of items.filter(i => i.on && i.amount > 0)) await S.db.collection("tx").doc().set({kind:"exp", cat:it.cat, amount:r2(it.amount), date:next + "-01", month:next, note:it.name, tag:"", ...(it.recId ? {recId:it.recId} : {}), created:now + k++});
     if (c.avanzo > 0 && restCat()) await S.db.collection("tx").doc().set({kind:"exp", cat:restCat(), amount:r2(c.avanzo), date:lastDay(x.m), month:x.m, note:"Avanzo di " + mLong(x.m), tag:"", created:now + k++});
     const rec = x.bud && !x.bud.error ? closeRecover() : null;
-    if (opt?.cats) { const out = {}; for (const [kk, v] of Object.entries(opt.cats)) if (catById(kk) && kk !== restCat()) out[kk] = r2(Number(v) || 0); await S.db.doc("budgets/" + next).set({month:next, cats:out, saved:Date.now()}); }
+    if (opt?.cats) { const clean = o => { const r = {}; for (const [kk, v] of Object.entries(o || {})) if (catById(kk) && kk !== restCat()) r[kk] = r2(Number(v) || 0); return r; }, out = clean(opt.cats), full = clean(opt.full);
+      await S.db.doc("budgets/" + next).set({month:next, cats:out, ...(JSON.stringify(full) !== JSON.stringify(out) ? {full} : {}), saved:Date.now()}); }
     const cfg = structuredClone(S.cfg); cfg.closed = {...(cfg.closed || {}), [x.m]:{date:todayISO(), avanzo:r2(c.avanzo), saldo:c.ok ? r2(c.saldo) : null, ...(opt ? {budget:opt.k} : {})}};
     if (rec) { const nr = {...rec}; if (opt?.spread) [0, 1, 2].forEach(i => { const mm = addMonth(next, i); nr[mm] = r2((Number(nr[mm]) || 0) + opt.spread); });
+      if (opt?.planNext) nr[next] = r2((Number(nr[next]) || 0) + opt.planNext);
       const kept = Object.fromEntries(Object.entries(cfg.recover || {}).filter(([mm]) => mm === x.m)); // il recupero del mese chiuso resta come storico
       cfg.recover = {...kept, ...nr}; if (!Object.keys(cfg.recover).length) delete cfg.recover;
       const dch = closeDebtOptions().length ? x.debtChoice : null; if (dch) cfg.closed[x.m].debt = dch; }
@@ -1521,6 +1524,7 @@ function viewBudget() {
   let h = `<div class="between" style="align-items:flex-end"><div><h1 class="pt">Budget di ${esc(mLong(S.month))}</h1>
     <p class="muted sm">${bud.draft ? (bud.from ? `Bozza copiata da ${esc(mLong(bud.from))}` : "Bozza con i valori predefiniti") + ", modifica e salva" : "Salvato · le modifiche valgono solo per questo mese"}</p></div>
     <span class="badge ${bud.draft ? "bd-warning" : "bd-success"}">${bud.draft ? "Bozza" : "Salvato"}</span></div>
+    ${Number(S.cfg.recover?.[S.month]) > 0 ? `<div class="alert" id="recNote"><div class="row" style="align-items:flex-start">${ic("info")}<div><div class="t">Piano di recupero: ${eur0(S.cfg.recover[S.month])} in meno</div><div class="muted sm">Le voci variabili di ${esc(mLong(S.month))} sono ridotte per recuperare un mese chiuso sotto la soglia${recPending(S.month).length ? ` · poi ${recPending(S.month).map(([k, v]) => `${esc(mShort(k))} −${eur0(v)}`).join(", ")}` : ""}. Puoi saldarlo alla chiusura del mese.</div></div></div></div>` : ""}
     <div class="card"><div class="card-c stack" style="gap:12px"><div class="between"><div><div class="muted sm" style="font-weight:500">Totale budget</div><div class="mono" id="btot" style="font-size:30px;font-weight:600;letter-spacing:-.03em">${eur0(budgetTotal())}</div></div>${acc ? `<div class="muted xs" style="text-align:right">di cui fondo annuale<br><span class="mono" style="font-size:13px;color:var(--foreground)">${eur(acc)}</span></div>` : ""}</div>
     <div class="sep" style="margin:0"></div>
     <div class="between sm"><span class="muted has-tip" tabindex="0" aria-describedby="budTip">Entrate mensili di ${esc(mLong(S.month))} <span class="tip-i" aria-hidden="true">?</span><span class="tip" role="tooltip" id="budTip">Ogni euro delle entrate mensili è assegnato: quello che non metti nelle altre voci finisce qui, anche quando arriva una nuova fattura. Borsa <span class="mono">${eur0(incomeFor(S.month).fixed)}</span> + fatture degli ultimi 12 mesi <span class="mono">${eur0(incomeFor(S.month).pool)}</span> ÷ 12. Ogni nuova fattura alza le entrate mensili di 1/12 del suo netto, per 12 mesi.</span></span><span class="mono" style="font-weight:500">${eur0(incomeFor(S.month).monthly)}</span></div>
@@ -2209,7 +2213,9 @@ document.addEventListener("click", async e => {
   if (act === "save-budget") {
     const out = {}; for (const [k, v] of Object.entries(S.budgetDraft || {})) { if (catById(k) && k !== restCat()) out[k] = r2(Number(v) || 0); }
     a.disabled = true;
-    try { await S.db.doc("budgets/" + S.month).set({month:S.month, cats:out, saved:Date.now()}); S.budgetDraft = null; toast("Budget salvato"); S.view = "mese"; window.scrollTo(0, 0); render(); } catch (er) { fail(er); a.disabled = false; }
+    const bf = budgetFor(), pf = bf.full && JSON.stringify(bf.full) !== JSON.stringify(bf.cats) ? bf.full : null, pc = bf.cats || {}; let full = null;
+    if (pf) { full = {}; for (const k of Object.keys(out)) full[k] = r2(out[k] + Math.max(0, (Number(pf[k]) || 0) - (Number(pc[k]) || 0))); } // la riduzione del piano resta per voce
+    try { await S.db.doc("budgets/" + S.month).set({month:S.month, cats:out, ...(full ? {full} : {}), saved:Date.now()}); S.budgetDraft = null; toast("Budget salvato"); S.view = "mese"; window.scrollTo(0, 0); render(); } catch (er) { fail(er); a.disabled = false; }
     return;
   }
   if (act === "add-row") {
