@@ -665,10 +665,17 @@ function cutVar(o, g) { // toglie g € dalle voci variabili, in proporzione al 
   for (let i = 0; i < 200 && sum > goal + 2.5; i++) { const id = ids.reduce((a, b) => out[b] > out[a] ? b : a); if (out[id] < 5) break; out[id] -= 5; sum -= 5; } // arrotondamenti: si toglie almeno g
   return out;
 }
+function addVar(o, g) { // inverso di cutVar: rimette g € sulle voci variabili in proporzione
+  const out = {...o}, ids = (S.cfg?.categories || []).filter(c => isVarCat(c) && Number(out[c.id]) > 0).map(c => c.id), tot = ids.reduce((a, id) => a + Number(out[id]), 0);
+  if (!(g > 0) || !tot) return out;
+  ids.forEach(id => { out[id] = Math.round(Number(out[id]) * (tot + g) / tot / 5) * 5; });
+  return out;
+}
+const unRecover = (o, m) => { const g = Number(S.cfg?.recover?.[m]) || 0; return g > 0 ? addVar(o, g) : o; }; // budget pieno di un mese ridotto per il recupero
 const applyRecover = (o, m = S.month) => { const g = Number(S.cfg?.recover?.[m]) || 0; return g > 0 ? cutVar(o, g) : o; };
 function budgetFor() {
   if (S.budget?.cats) return {cats:S.budget.cats, draft:false};
-  if (S.prevBudget?.cats) { const o = {...S.prevBudget.cats}; cats().forEach(c => { if (!(c.id in o) && Number(c.defaultBudget)) o[c.id] = Number(c.defaultBudget); }); return {cats:applyRecover(recBudget(o)), draft:true, from:S.prevBudget.month}; }
+  if (S.prevBudget?.cats) { const o = unRecover(S.prevBudget.cats, S.prevBudget.month); cats().forEach(c => { if (!(c.id in o) && Number(c.defaultBudget)) o[c.id] = Number(c.defaultBudget); }); return {cats:applyRecover(recBudget(o)), draft:true, from:S.prevBudget.month}; }
   const o = {}; cats().forEach(c => o[c.id] = Number(c.defaultBudget) || 0);
   return {cats:applyRecover(recBudget(o)), draft:true, from:null};
 }
@@ -1034,7 +1041,7 @@ async function loadCloseBudgets(x) {
     const [bm, bn] = await Promise.all([S.db.doc("budgets/" + x.m).get(), S.db.doc("budgets/" + next).get()]);
     const cur = bm.exists ? bm.data().cats : x.m === S.month ? budgetFor().cats : (S.prevBudget?.cats || defs());
     const nextSaved = bn.exists ? bn.data().cats : null;
-    const base = nextSaved ? {...nextSaved} : (() => { const o = {...cur}; cats().forEach(c => { if (!(c.id in o) && Number(c.defaultBudget)) o[c.id] = Number(c.defaultBudget); }); return recBudget(o, next); })();
+    const base = nextSaved ? {...nextSaved} : (() => { const o = unRecover(cur, x.m); cats().forEach(c => { if (!(c.id in o) && Number(c.defaultBudget)) o[c.id] = Number(c.defaultBudget); }); return recBudget(o, next); })();
     if (restCat()) delete base[restCat()];
     const r = computeMonth(S.expTx.filter(t => t.month === x.m), cur, x.m);
     x.bud = {cur, nextSaved, base, r};
@@ -1042,9 +1049,36 @@ async function loadCloseBudgets(x) {
   if (closeState === x) { readClose(); drawClose(); }
 }
 /* quanto manca: col saldo scritto è il buco sotto la soglia, altrimenti quanto il mese è andato oltre le entrate */
+/* piano di recupero ancora da fare dopo il mese che si chiude */
+const recPending = m => Object.entries(S.cfg?.recover || {}).filter(([k, v]) => k > m && Number(v) > 0).sort(([a], [b]) => a.localeCompare(b));
+function closeDebt() {
+  const x = closeState, c = closeCalc(), b = x.bud, list = recPending(x.m), pending = r2(list.reduce((a, [, v]) => a + Number(v), 0));
+  if (!b || b.error || pending < 0.5) return {pending:0, list:[], est:0};
+  let est;
+  if (c.ok) est = Math.min(pending, Math.max(0, c.soglia + c.res + c.fixed - c.saldo)); // quanto manca davvero sul conto
+  else { const planned = Number(S.cfg.recover?.[x.m]) || 0, res = b.r.income - b.r.spentTot; est = Math.max(0, pending - Math.max(0, res - planned)); } // avanzo oltre il recupero previsto
+  return {pending, list, est:r2(est)};
+}
+function closeDebtOptions() {
+  const x = closeState, dt = closeDebt(); if (!dt.pending) return [];
+  const next = addMonth(x.m, 1), o = [];
+  if (dt.est < dt.pending - 0.5) o.push(dt.est <= 0.5 ? {k:"settle", t:"Salda il debito", d:`L'avanzo di ${mLong(x.m)} copre i ${eur0(dt.pending)} rimasti: da ${mLong(next)} torni al budget pieno`}
+    : {k:"settle", t:`Salda in parte: il debito scende a ${eur0(dt.est)}`, d:`L'avanzo di ${mLong(x.m)} copre ${eur0(dt.pending - dt.est)}; si tolgono prima le riduzioni dei mesi più vicini`});
+  if (dt.est > 0.5) o.push({k:"all", t:"Salda tutto adesso", d:`Torni subito al budget pieno; i ${eur0(dt.est)} che mancano li copri con il conto o con i risparmi`});
+  o.push({k:"keep", t:"Continua il piano di recupero", d:dt.list.map(([k, v]) => `${mShort(k)} −${eur0(v)}`).join(" · ")});
+  return o;
+}
+function closeRecover() { // piano di recupero dopo la scelta sul debito (solo i mesi dopo quello che si chiude)
+  const x = closeState, dt = closeDebt(), out = Object.fromEntries(dt.list.map(([k, v]) => [k, Number(v)]));
+  if (!dt.pending || x.debtChoice === "keep") return out;
+  if (x.debtChoice === "all") return {};
+  let pay = dt.pending - dt.est;
+  for (const [k] of dt.list) { const p = Math.min(out[k], pay); out[k] = r2(out[k] - p); pay -= p; if (out[k] < 0.01) delete out[k]; }
+  return out;
+}
 function closeGap() {
   const x = closeState, c = closeCalc(), b = x.bud; if (!b || b.error) return {gap:0, cash:false, over:[], d:0};
-  const d = Math.max(0, b.r.spentTot - b.r.income), cash = c.ok ? Math.max(0, c.soglia + c.res + c.fixed - c.saldo) : null;
+  const d = Math.max(0, b.r.spentTot - b.r.income), cash = c.ok ? Math.max(0, c.soglia + c.res + c.fixed - c.saldo - closeDebt().pending) : null;
   const over = b.r.rows.filter(y => isVarCat(y.c) && y.s > y.b + 0.5).sort((p, q) => (q.s - q.b) - (p.s - p.b));
   return {gap:r2(cash != null ? cash : d), cash:cash != null, over, d};
 }
@@ -1058,22 +1092,26 @@ function closeOptions() {
   if (g.gap > 0.5) {
     if (casa) opts.push({k:"casa", t:`Versa meno nel ${casa.name.replace(/ \(minimo\)$/, "")}`, d:casa.amount >= g.gap ? `${eur0(casa.amount)} → ${eur0(casa.amount - g.gap)} a ${mLong(next)}: il budget delle spese resta uguale` : `Il versamento scende a 0 € (−${eur0(casa.amount)}) e i restanti ${eur0(g.gap - casa.amount)} si tolgono dalle spese variabili`, cats:casa.amount >= g.gap ? base : cutVar(base, g.gap - casa.amount), casa:Math.max(0, r2(casa.amount - g.gap))});
     opts.push({k:"cut", t:`Taglia le spese variabili di ${mLong(next)}`, d:`${eur0(g.gap)} in meno, divisi tra le voci variabili in proporzione al loro budget`, cats:cutVar(base, g.gap)});
-    opts.push({k:"spread", t:"Recupera in 3 mesi", d:`${eur0(g.gap / 3)} in meno al mese sulle voci variabili, da ${mLong(next)} a ${mLong(addMonth(next, 2))}`, cats:cutVar(base, g.gap / 3), spread:r2(g.gap / 3)});
+    opts.push({k:"spread", t:"Recupera in 3 mesi", d:`${eur0(g.gap / 3)} in meno al mese sulle voci variabili, da ${mLong(next)} a ${mLong(addMonth(next, 2))}`, cats:base, spread:r2(g.gap / 3)});
     opts.push({k:"same", t:"Non cambiare il budget", d:g.cash ? `Il conto resta ${eur0(g.gap)} sotto la soglia: lo coprirai con le prossime entrate` : "Il disavanzo resta coperto dal margine sul conto", cats:base});
   } else {
-    opts.push({k:"same", t:b.nextSaved ? `Tieni il budget già impostato per ${mLong(next)}` : `Stesso budget di ${mLong(x.m)}`, d:g.over.length ? "Anche se alcune voci sono state sforate" : "Il mese è andato come previsto", cats:base});
+    opts.push({k:"same", t:b.nextSaved ? `Tieni il budget già impostato per ${mLong(next)}` : `Stesso budget di ${mLong(x.m)}${Number(S.cfg.recover?.[x.m]) ? ", senza la riduzione" : ""}`, d:g.over.length ? "Anche se alcune voci sono state sforate" : "Il mese è andato come previsto", cats:base});
     opts.push({k:"real", t:`Adegua alle spese reali di ${mLong(x.m)}`, d:"Ogni voce variabile prende quanto hai speso davvero, arrotondato a 5 €", cats:real});
     if (avg) opts.push({k:"avg", t:"Usa la media degli ultimi 3 mesi", d:"Per le voci variabili, arrotondata a 5 €", cats:avg});
   }
   opts.push({k:"later", t:"Decido dopo", d:"Il budget lo imposti tu nella sezione Budget", cats:null});
+  const recN = Number(closeRecover()[next]) || 0; // recupero già previsto per il mese dopo
+  opts.forEach(o => { const cut = recN + (o.spread || 0); if (o.cats && cut > 0) o.cats = cutVar(o.cats, cut); });
   return opts;
 }
 function closeBudHtml() {
   const x = closeState, next = addMonth(x.m, 1);
   if (!x.bud) return `<div class="xs muted">Carico il budget…</div>`;
   if (x.bud.error) return `<div class="xs muted">Non riesco a leggere il budget: lo imposti dalla sezione Budget.</div>`;
+  const dopts = closeDebtOptions(), dt = closeDebt(), dsig = dopts.map(o => o.k).join(); if (dopts.length && (x.debtSig !== dsig || !dopts.some(o => o.k === x.debtChoice))) { x.debtSig = dsig; x.debtChoice = dopts[0].k; }
   const g = closeGap(), opts = closeOptions(), mode = g.gap > 0.5 ? "gap" : "ok"; if (x.budMode !== mode || !opts.some(o => o.k === x.budChoice)) { x.budMode = mode; x.budChoice = opts[0].k; }
   const sel = opts.find(o => o.k === x.budChoice);
+  const debt = dopts.length ? `<div class="sm">Piano di recupero in corso: <b class="mono">${eur0(dt.pending)}</b> ancora da recuperare${dt.est <= 0.5 ? ", ma il conto è già tornato in pari" : dt.est < dt.pending - 0.5 ? `, ma ne mancano davvero <b class="mono">${eur0(dt.est)}</b>` : ""}.</div><div class="stack" style="gap:6px" role="radiogroup" aria-label="Debito">${dopts.map(o => `<label class="clopt${o.k === x.debtChoice ? " on" : ""}"><input type="radio" name="clDebt" value="${o.k}" ${o.k === x.debtChoice ? "checked" : ""}><span><span class="t">${esc(o.t)}</span><span class="xs muted">${esc(o.d)}</span></span></label>`).join("")}</div><div class="sep" style="margin:4px 0"></div>` : "";
   const head = g.gap > 0.5 ? `<div class="sm" style="color:var(--destructive)">${g.cash ? `Dopo i versamenti il conto resta <b class="mono">${eur0(g.gap)}</b> sotto la soglia` : `${esc(mLong(x.m))} è andato oltre le entrate di <b class="mono">${eur0(g.gap)}</b>`}. Come lo recuperi?</div>`
     : g.over.length ? `<div class="sm muted">Sforate: ${g.over.slice(0, 3).map(y => `${esc(y.c.name)} <span class="mono" style="color:var(--destructive)">+${eur0(y.s - y.b)}</span>`).join(", ")}</div>` : `<div class="sm muted">Nessuna voce sforata.</div>`;
   let prev = "";
@@ -1082,7 +1120,7 @@ function closeBudHtml() {
     const tv = o => cats().filter(isVarCat).reduce((a, c) => a + (Number(o[c.id]) || 0), 0);
     prev = ch.length ? `<div class="card card-c stack" style="gap:4px;padding:10px 12px">${ch.slice(0, 8).map(c => `<div class="between xs"><span>${esc(c.name)}</span><span class="mono"><span class="muted">${eur0(Number(x.bud.base[c.id]) || 0)} →</span> ${eur0(Number(sel.cats[c.id]) || 0)}</span></div>`).join("")}${ch.length > 8 ? `<div class="xs muted">e altre ${ch.length - 8}</div>` : ""}<div class="sep" style="margin:3px 0"></div><div class="between xs"><span>Spese variabili</span><b class="mono">${eur0(tv(x.bud.base))} → ${eur0(tv(sel.cats))}</b></div></div>` : "";
   }
-  return head + `<div class="stack" style="gap:6px" role="radiogroup" aria-label="Budget di ${esc(mLong(next))}">${opts.map(o => `<label class="clopt${o.k === x.budChoice ? " on" : ""}"><input type="radio" name="clBud" value="${o.k}" ${o.k === x.budChoice ? "checked" : ""}><span><span class="t">${esc(o.t)}</span><span class="xs muted">${esc(o.d)}</span></span></label>`).join("")}</div>` + prev;
+  return debt + head + `<div class="stack" style="gap:6px" role="radiogroup" aria-label="Budget di ${esc(mLong(next))}">${opts.map(o => `<label class="clopt${o.k === x.budChoice ? " on" : ""}"><input type="radio" name="clBud" value="${o.k}" ${o.k === x.budChoice ? "checked" : ""}><span><span class="t">${esc(o.t)}</span><span class="xs muted">${esc(o.d)}</span></span></label>`).join("")}</div>` + prev;
 }
 function closeCalc() {
   const x = closeState, saldo = parseAmt(x.saldo), soglia = parseAmt(x.soglia) || 0, res = x.reserve.reduce((a, d) => a + d.amount, 0);
@@ -1091,7 +1129,7 @@ function closeCalc() {
   const avanzo = x.avanzoStr != null && x.avanzoStr !== "" ? Math.max(0, parseAmt(x.avanzoStr) || 0) : auto;
   return {saldo, soglia, res, fixed, auto, avanzo, ok:isFinite(saldo)};
 }
-function readClose() { const x = closeState; if (!x) return; const rb = document.querySelector('#cld input[name=clBud]:checked'); if (rb) x.budChoice = rb.value; if ($("#clSaldo")) x.saldo = $("#clSaldo").value; if ($("#clSoglia")) x.soglia = $("#clSoglia").value; if ($("#clAv")) x.avanzoStr = $("#clAv").value === "" ? null : $("#clAv").value; document.querySelectorAll("#cld [data-cli]").forEach(r => { const it = x.items[Number(r.dataset.cli)]; it.on = r.querySelector("input[type=checkbox]").checked; const v = parseAmt(r.querySelector("[data-f=amt]").value); if (isFinite(v)) it.amount = v; }); }
+function readClose() { const x = closeState; if (!x) return; const rb = document.querySelector('#cld input[name=clBud]:checked'); if (rb) x.budChoice = rb.value; const rd = document.querySelector('#cld input[name=clDebt]:checked'); if (rd) x.debtChoice = rd.value; if ($("#clSaldo")) x.saldo = $("#clSaldo").value; if ($("#clSoglia")) x.soglia = $("#clSoglia").value; if ($("#clAv")) x.avanzoStr = $("#clAv").value === "" ? null : $("#clAv").value; document.querySelectorAll("#cld [data-cli]").forEach(r => { const it = x.items[Number(r.dataset.cli)]; it.on = r.querySelector("input[type=checkbox]").checked; const v = parseAmt(r.querySelector("[data-f=amt]").value); if (isFinite(v)) it.amount = v; }); }
 function drawClose() {
   const el = $("#cld"), x = closeState; if (!el || !x) return; const c = closeCalc(), next = addMonth(x.m, 1), rest = catById(restCat())?.name || "Salvadanaio";
   el.innerHTML = `<div class="handle-zone"><div class="handle"></div></div>
@@ -1123,9 +1161,13 @@ async function saveClose() {
     const opt = x.bud && !x.bud.error ? closeOptions().find(o => o.k === x.budChoice) : null, items = closeFinalItems();
     for (const it of items.filter(i => i.on && i.amount > 0)) await S.db.collection("tx").doc().set({kind:"exp", cat:it.cat, amount:r2(it.amount), date:next + "-01", month:next, note:it.name, tag:"", ...(it.recId ? {recId:it.recId} : {}), created:now + k++});
     if (c.avanzo > 0 && restCat()) await S.db.collection("tx").doc().set({kind:"exp", cat:restCat(), amount:r2(c.avanzo), date:lastDay(x.m), month:x.m, note:"Avanzo di " + mLong(x.m), tag:"", created:now + k++});
-    if (opt?.cats && !(opt.k === "same" && x.bud.nextSaved)) { const out = {}; for (const [kk, v] of Object.entries(opt.cats)) if (catById(kk) && kk !== restCat()) out[kk] = r2(Number(v) || 0); await S.db.doc("budgets/" + next).set({month:next, cats:out, saved:Date.now()}); }
+    const rec = x.bud && !x.bud.error ? closeRecover() : null;
+    if (opt?.cats) { const out = {}; for (const [kk, v] of Object.entries(opt.cats)) if (catById(kk) && kk !== restCat()) out[kk] = r2(Number(v) || 0); await S.db.doc("budgets/" + next).set({month:next, cats:out, saved:Date.now()}); }
     const cfg = structuredClone(S.cfg); cfg.closed = {...(cfg.closed || {}), [x.m]:{date:todayISO(), avanzo:r2(c.avanzo), saldo:c.ok ? r2(c.saldo) : null, ...(opt ? {budget:opt.k} : {})}};
-    if (opt?.spread) cfg.recover = {...Object.fromEntries(Object.entries(cfg.recover || {}).filter(([mm]) => mm > next)), [addMonth(next, 1)]:opt.spread, [addMonth(next, 2)]:opt.spread};
+    if (rec) { const nr = {...rec}; if (opt?.spread) [0, 1, 2].forEach(i => { const mm = addMonth(next, i); nr[mm] = r2((Number(nr[mm]) || 0) + opt.spread); });
+      const kept = Object.fromEntries(Object.entries(cfg.recover || {}).filter(([mm]) => mm === x.m)); // il recupero del mese chiuso resta come storico
+      cfg.recover = {...kept, ...nr}; if (!Object.keys(cfg.recover).length) delete cfg.recover;
+      const dch = closeDebtOptions().length ? x.debtChoice : null; if (dch) cfg.closed[x.m].debt = dch; }
     const th = parseAmt(x.soglia); if (isFinite(th)) cfg.closeThreshold = r2(th);
     await S.db.doc("config/main").set(cfg); S.cfg = cfg;
     closeClose(); render(); toast(`${mLong(x.m)} chiuso · ${k} versamenti registrati${opt?.cats ? " · budget di " + mLong(next) + " impostato" : ""}`);
