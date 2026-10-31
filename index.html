@@ -1032,7 +1032,7 @@ function closeItems(m) {
 let closeState = null;
 function openClose(m, only = false) {
   const reserve = taxStatus().open.filter(d => d.pot === false && d.date <= addDaysISO(lastDay(addMonth(m, 1)), 0) && d.date > lastDay(m)).map(d => ({name:d.name, date:d.date, amount:Number(d.amount) || 0}));
-  closeState = {m, only, saldo:"", soglia:String(S.cfg.closeThreshold ?? 3000), reserve:only ? [] : reserve, items:only ? [] : closeItems(m), avanzoStr:null, step:1, bud:null, budChoice:null};
+  closeState = {m, only, minimo:String(S.cfg.closeMin ?? 1500), saldo:"", soglia:String(S.cfg.closeThreshold ?? 3000), reserve:only ? [] : reserve, items:only ? [] : closeItems(m), avanzoStr:null, step:1, bud:null, budChoice:null};
   loadCloseBudgets(closeState);
   const bg = document.createElement("div"); bg.className = "ovl"; bg.id = "clBg";
   bg.innerHTML = `<div class="drawer" role="dialog" aria-modal="true" aria-labelledby="clTitle" id="cld"></div>`;
@@ -1060,11 +1060,10 @@ async function loadCloseBudgets(x) {
 /* piano di recupero ancora da fare dopo il mese che si chiude */
 const recPending = m => Object.entries(S.cfg?.recover || {}).filter(([k, v]) => k > m && Number(v) > 0).sort(([a], [b]) => a.localeCompare(b));
 function closeDebt() {
-  const x = closeState, c = closeCalc(), b = x.bud, list = recPending(x.m), pending = r2(list.reduce((a, [, v]) => a + Number(v), 0));
+  const x = closeState, b = x.bud, list = recPending(x.m), pending = r2(list.reduce((a, [, v]) => a + Number(v), 0));
   if (!b || b.error || pending < 0.5) return {pending:0, list:[], est:0};
   let est;
-  if (c.ok) est = Math.min(pending, Math.max(0, c.soglia + c.res + c.fixed - c.saldo)); // quanto manca davvero sul conto
-  else { const planned = Number(S.cfg.recover?.[x.m]) || 0, res = b.r.income - b.r.spentTot; est = Math.max(0, pending - Math.max(0, res - planned)); } // avanzo oltre il recupero previsto
+  { const planned = Number(S.cfg.recover?.[x.m]) || 0, res = b.r.income - b.r.spentTot; est = Math.max(0, pending - Math.max(0, res - planned)); } // avanzo oltre il recupero previsto
   return {pending, list, est:r2(est)};
 }
 function closeDebtOptions() {
@@ -1086,12 +1085,12 @@ function closeRecover() { // piano di recupero dopo la scelta sul debito (solo i
 }
 function closeGap() {
   const x = closeState, c = closeCalc(), b = x.bud; if (!b || b.error) return {gap:0, cash:false, over:[], d:0};
-  const d = r2(Math.max(0, b.r.spentTot - b.r.income)), cash = c.ok ? r2(Math.max(0, c.soglia + c.res + c.fixed - c.saldo - closeDebt().pending)) : null;
+  const d = r2(Math.max(0, b.r.spentTot - b.r.income)), low = c.ok ? r2(Math.max(0, c.min - c.after - closeDebt().pending)) : null;
   const over = b.r.rows.filter(y => isVarCat(y.c) && y.s > y.b + 0.5).sort((p, q) => (q.s - q.b) - (p.s - p.b));
-  // il conto sotto la soglia ha la precedenza; altrimenti conta il mese chiuso oltre le entrate, anche se il conto regge
-  if (cash != null && cash > 0.5) return {gap:cash, cash:true, over, d, kind:"cash"};
-  if (d > 0.5) return {gap:d, cash:false, cashOk:cash != null, over, d, kind:"month"};
-  return {gap:0, cash:cash != null, over, d, kind:null};
+  // si recupera quando il mese ha speso più delle entrate; il conto sotto la soglia è normale nei mesi magri, conta solo sotto il minimo di sicurezza
+  if (d > 0.5) return {gap:d, cash:false, cashOk:c.ok && c.after >= c.soglia, over, d, kind:"month"};
+  if (low != null && low > 0.5) return {gap:low, cash:true, over, d, kind:"low"};
+  return {gap:0, cash:c.ok, over, d, kind:null};
 }
 function closeOptions() {
   const x = closeState, b = x.bud; if (!b || b.error) return [];
@@ -1104,7 +1103,7 @@ function closeOptions() {
     if (casa) opts.push({k:"casa", t:`Versa meno nel ${casa.name.replace(/ \(minimo\)$/, "")}`, d:casa.amount >= g.gap ? `${eur0(casa.amount)} → ${eur0(casa.amount - g.gap)} a ${mLong(next)}: il budget delle spese resta uguale` : `Il versamento scende a 0 € (−${eur0(casa.amount)}) e i restanti ${eur0(g.gap - casa.amount)} si tolgono dalle spese variabili`, cats:casa.amount >= g.gap ? base : cutVar(base, g.gap - casa.amount), planNext:Math.max(0, r2(g.gap - casa.amount)), full:base, casa:Math.max(0, r2(casa.amount - g.gap))});
     opts.push({k:"cut", t:`Taglia le spese variabili di ${mLong(next)}`, d:`${eur0(g.gap)} in meno, divisi tra le voci variabili in proporzione al loro budget`, cats:cutVar(base, g.gap), planNext:g.gap, full:base});
     opts.push({k:"spread", t:"Recupera in 3 mesi", d:`${eur0(g.gap / 3)} in meno al mese sulle voci variabili, da ${mLong(next)} a ${mLong(addMonth(next, 2))}`, cats:base, spread:r2(g.gap / 3)});
-    opts.push({k:"same", t:g.cashOk ? "Non recuperarlo" : "Non cambiare il budget", d:g.cash ? `Il conto resta ${eur0(g.gap)} sotto la soglia: lo coprirai con le prossime entrate` : g.cashOk ? "Il conto è comunque sopra la soglia: il negativo è già coperto" : "Il disavanzo resta coperto dal margine sul conto", cats:base});
+    opts.push({k:"same", t:g.cashOk ? "Non recuperarlo" : "Non cambiare il budget", d:g.cash ? `Il conto resta sotto il minimo: lo coprirai con le prossime entrate` : g.cashOk ? "Il conto è comunque sopra la soglia: il negativo è già coperto" : "Il disavanzo resta coperto dal margine sul conto", cats:base});
   } else {
     opts.push({k:"same", t:b.nextSaved ? `Tieni il budget già impostato per ${mLong(next)}` : `Stesso budget di ${mLong(x.m)}${Number(S.cfg.recover?.[x.m]) ? ", senza la riduzione" : ""}`, d:g.over.length ? "Anche se alcune voci sono state sforate" : "Il mese è andato come previsto", cats:base});
     opts.push({k:"real", t:`Adegua alle spese reali di ${mLong(x.m)}`, d:"Ogni voce variabile prende quanto hai speso davvero, arrotondato a 5 €", cats:real});
@@ -1123,7 +1122,7 @@ function closeBudHtml() {
   const g = closeGap(), opts = closeOptions(), mode = g.gap > 0.5 ? "gap" : "ok"; if (x.budMode !== mode || !opts.some(o => o.k === x.budChoice)) { x.budMode = mode; x.budChoice = mode === "gap" ? null : opts[0].k; } // col negativo la scelta è tua: niente preselezione
   const sel = opts.find(o => o.k === x.budChoice);
   const debt = dopts.length ? `<div class="sm">Piano di recupero in corso: <b class="mono">${eur0(dt.pending)}</b> ancora da recuperare${dt.est <= 0.5 ? ", ma il conto è già tornato in pari" : dt.est < dt.pending - 0.5 ? `, ma ne mancano davvero <b class="mono">${eur0(dt.est)}</b>` : ""}.</div><div class="stack" style="gap:6px" role="radiogroup" aria-label="Debito">${dopts.map(o => `<label class="clopt${o.k === x.debtChoice ? " on" : ""}"><input type="radio" name="clDebt" value="${o.k}" ${o.k === x.debtChoice ? "checked" : ""}><span><span class="t">${esc(o.t)}</span><span class="xs muted">${esc(o.d)}</span></span></label>`).join("")}</div><div class="sep" style="margin:4px 0"></div>` : "";
-  const head = g.gap > 0.5 ? `<div class="sm" style="color:var(--destructive)">${g.cash ? `Dopo i versamenti il conto resta <b class="mono">${eur0(g.gap)}</b> sotto la soglia` : `${esc(mLong(x.m))} è andato oltre le entrate di <b class="mono">${eur0(g.gap)}</b>${g.cashOk ? " (il conto però è sopra la soglia)" : ""}`}. Come vuoi gestirlo? Scegli un'opzione.</div>`
+  const head = g.gap > 0.5 ? `<div class="sm" style="color:var(--destructive)">${g.cash ? `Dopo i versamenti il conto scende a <b class="mono">${eur0(closeCalc().after)}</b>, <b class="mono">${eur0(g.gap)}</b> sotto il minimo di sicurezza: le entrate potrebbero essere calate davvero` : `${esc(mLong(x.m))} è andato oltre le entrate di <b class="mono">${eur0(g.gap)}</b>${g.cashOk ? " (il conto però è sopra la soglia)" : ""}`}. Come vuoi gestirlo? Scegli un'opzione.</div>`
     : g.over.length ? `<div class="sm muted">Sforate: ${g.over.slice(0, 3).map(y => `${esc(y.c.name)} <span class="mono" style="color:var(--destructive)">+${eur0(y.s - y.b)}</span>`).join(", ")}</div>` : `<div class="sm muted">Nessuna voce sforata.</div>`;
   let prev = "";
   if (sel?.cats) {
@@ -1136,11 +1135,18 @@ function closeBudHtml() {
 function closeCalc() {
   const x = closeState, saldo = parseAmt(x.saldo), soglia = parseAmt(x.soglia) || 0, res = x.reserve.reduce((a, d) => a + d.amount, 0);
   const fixed = x.items.filter(i => i.on).reduce((a, i) => a + i.amount, 0);
-  const auto = isFinite(saldo) ? Math.max(0, saldo - soglia - res - fixed) : 0;
+  const minimo = parseAmt(x.minimo); const min = isFinite(minimo) ? minimo : 1500;
+  const above = isFinite(saldo) ? Math.max(0, saldo - soglia - res - fixed) : 0; // quanto resta sopra la soglia dopo i versamenti
+  const month = x.bud && !x.bud.error ? r2(x.bud.r.income - x.bud.r.spentTot) : null; // avanzo del mese: entrate dell'app meno spese
+  // alla casa va l'avanzo del mese, ma solo se sul conto c'è; il resto rimane sul conto come riserva per i mesi con meno fatture
+  // la parte dell'avanzo che ripaga un mese negativo (recupero previsto per questo mese, o debito saldato ora) resta sul conto
+  const dt = month == null ? null : closeDebt(), repay = month == null ? 0 : (Number(S.cfg.recover?.[x.m]) || 0) + (x.debtChoice === "settle" && dt.pending ? dt.pending - dt.est : 0);
+  const free = month == null ? null : Math.max(0, r2(month - repay));
+  const auto = month == null ? above : Math.min(free, above), keep = Math.max(0, r2(above - auto));
   const avanzo = x.avanzoStr != null && x.avanzoStr !== "" ? Math.max(0, parseAmt(x.avanzoStr) || 0) : auto;
-  return {saldo, soglia, res, fixed, auto, avanzo, ok:isFinite(saldo)};
+  return {saldo, soglia, min, res, fixed, above, month, repay:r2(Math.min(Math.max(0, month ?? 0), repay)), auto, keep, avanzo, after:isFinite(saldo) ? saldo - res - fixed : null, ok:isFinite(saldo)};
 }
-function readClose() { const x = closeState; if (!x) return; const rb = document.querySelector('#cld input[name=clBud]:checked'); if (rb) x.budChoice = rb.value; const rd = document.querySelector('#cld input[name=clDebt]:checked'); if (rd) x.debtChoice = rd.value; if ($("#clSaldo")) x.saldo = $("#clSaldo").value; if ($("#clSoglia")) x.soglia = $("#clSoglia").value; if ($("#clAv")) x.avanzoStr = $("#clAv").value === "" ? null : $("#clAv").value; document.querySelectorAll("#cld [data-cli]").forEach(r => { const it = x.items[Number(r.dataset.cli)]; it.on = r.querySelector("input[type=checkbox]").checked; const v = parseAmt(r.querySelector("[data-f=amt]").value); if (isFinite(v)) it.amount = v; }); }
+function readClose() { const x = closeState; if (!x) return; const rb = document.querySelector('#cld input[name=clBud]:checked'); if (rb) x.budChoice = rb.value; const rd = document.querySelector('#cld input[name=clDebt]:checked'); if (rd) x.debtChoice = rd.value; if ($("#clSaldo")) x.saldo = $("#clSaldo").value; if ($("#clSoglia")) x.soglia = $("#clSoglia").value; if ($("#clMin")) x.minimo = $("#clMin").value; if ($("#clAv")) x.avanzoStr = $("#clAv").value === "" ? null : $("#clAv").value; document.querySelectorAll("#cld [data-cli]").forEach(r => { const it = x.items[Number(r.dataset.cli)]; it.on = r.querySelector("input[type=checkbox]").checked; const v = parseAmt(r.querySelector("[data-f=amt]").value); if (isFinite(v)) it.amount = v; }); }
 function drawClose() {
   const el = $("#cld"), x = closeState; if (!el || !x) return; const c = closeCalc(), next = addMonth(x.m, 1), rest = catById(restCat())?.name || "Salvadanaio";
   if (x.only) { el.innerHTML = `<div class="handle-zone"><div class="handle"></div></div>
@@ -1151,11 +1157,17 @@ function drawClose() {
     <div class="between"><div><h2 id="clTitle" style="font-size:17px;font-weight:600">Chiudi ${esc(mLong(x.m))}</h2><p class="muted sm">Avanzo del mese e versamenti di ${esc(mLong(next))}</p></div><button class="btn b-ghost b-icon b-sm" data-act="cl-close" aria-label="Chiudi">${ic("x")}</button></div>
     <div class="clstep"><div class="cln">1</div><div class="stack grow" style="gap:10px"><div style="font-weight:600">Saldo del conto corrente</div>
       <div class="grid2"><div class="field"><label for="clSaldo">Saldo adesso, con la borsa arrivata €</label><input id="clSaldo" class="inp mono" inputmode="decimal" placeholder="es. 4.200" value="${esc(x.saldo)}"></div><div class="field"><label for="clSoglia">Da tenere sul conto €</label><input id="clSoglia" class="inp mono" inputmode="decimal" value="${esc(x.soglia)}"></div></div>
+      <div class="field"><label for="clMin" class="has-tip" title="Se dopo i versamenti il conto scende sotto questa cifra, le entrate potrebbero essere calate davvero: l'app ti propone di recuperare">Minimo di sicurezza €</label><input id="clMin" class="inp mono" inputmode="decimal" style="max-width:160px" value="${esc(x.minimo)}"></div>
       ${x.reserve.length ? `<div class="xs muted">Da pagare dal conto prima della prossima borsa: ${x.reserve.map(d => `${esc(d.name)} ${eur(d.amount)} (${esc(fmtDateS(d.date))})`).join(", ")} · tenuto da parte in più</div>` : ""}</div></div>
     <div class="clstep"><div class="cln">2</div><div class="stack grow" style="gap:8px"><div style="font-weight:600">Versamenti di ${esc(mLong(next))}</div>
       ${x.items.length ? x.items.map((it, i) => `<label class="between sm" data-cli="${i}" style="gap:10px;cursor:pointer"><span class="row" style="gap:8px;min-width:0"><input type="checkbox" ${it.on ? "checked" : ""}><span class="cic g-ris">${ic(catIcon(it.cat))}</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(it.name)}${it.auto ? ` <span class="muted xs">· addebito automatico</span>` : ""}</span></span><input class="inp num mono" data-f="amt" inputmode="decimal" style="width:96px" value="${esc(String(it.amount).replace(".", ","))}"></label>`).join("") : `<div class="xs muted">Nessun versamento fisso da fare.</div>`}</div></div>
     <div class="clstep"><div class="cln">3</div><div class="stack grow" style="gap:8px"><div style="font-weight:600">Avanzo di ${esc(mLong(x.m))} → ${esc(rest)}</div>
-      <div class="between sm"><span class="muted">Saldo − da tenere${c.res ? " − pagamenti dal conto" : ""} − versamenti</span><b class="mono">${c.ok ? eur(c.auto) : "—"}</b></div>
+      <div class="between sm"><span class="muted">Da spostare</span><b class="mono">${c.ok ? eur(c.auto) : "—"}</b></div>
+      <div class="between xs"><span class="muted">Avanzo del mese (entrate − spese)</span><span class="mono" style="color:${c.month != null && c.month < 0 ? "var(--destructive)" : "inherit"}">${c.month != null ? eur(c.month) : "…"}</span></div>
+      ${c.repay > 0.5 ? `<div class="between xs"><span class="muted">Di cui per recuperare i mesi negativi (resta sul conto)</span><span class="mono">−${eur(c.repay)}</span></div>` : ""}
+      <div class="between xs"><span class="muted">Sul conto sopra la soglia${c.res ? ", pagamenti" : ""} e versamenti</span><span class="mono">${c.ok ? eur(c.above) : "—"}</span></div>
+      ${c.ok && c.keep > 0.5 ? `<div class="xs muted">${eur(c.keep)} restano sull'Intesa come riserva per i mesi con meno fatture.</div>` : ""}
+      ${c.ok && c.after < c.soglia - 0.5 && c.after >= c.min ? `<div class="xs muted">Il conto resta sotto la soglia (${eur0(c.after)}): normale nei mesi con meno fatture, si riempie con quelle estive.</div>` : ""}
       <div class="field"><label for="clAv">Avanzo da spostare €</label><input id="clAv" class="inp mono" inputmode="decimal" placeholder="${c.ok ? esc(String(r2(c.auto)).replace(".", ",")) : "scrivi prima il saldo"}" value="${esc(x.avanzoStr ?? "")}"></div></div></div>
     <div class="clstep"><div class="cln">4</div><div class="stack grow" style="gap:8px"><div style="font-weight:600">Budget di ${esc(mLong(next))}</div>${closeBudHtml()}</div></div>
     <div class="card card-c stack" style="gap:6px;padding:12px"><div class="xs muted">Bonifici da fare</div>${[...closeFinalItems().filter(i => i.on && i.amount > 0 && !i.auto).map(i => [i.name, i.amount]), ...(c.avanzo > 0 ? [[`${rest} (avanzo)`, c.avanzo]] : [])].map(([n, v]) => `<div class="between sm"><span>${esc(n)}</span><b class="mono">${eur(v)}</b></div>`).join("") || `<div class="sm muted">Nessuno</div>`}
@@ -1189,6 +1201,7 @@ async function saveClose() {
       cfg.recover = {...kept, ...nr}; if (!Object.keys(cfg.recover).length) delete cfg.recover;
       const dch = closeDebtOptions().length ? x.debtChoice : null; if (dch) cfg.closed[x.m].debt = dch; }
     const th = parseAmt(x.soglia); if (!x.only && isFinite(th)) cfg.closeThreshold = r2(th);
+    const mn = parseAmt(x.minimo); if (!x.only && isFinite(mn)) cfg.closeMin = r2(mn);
     await S.db.doc("config/main").set(cfg); S.cfg = cfg;
     closeClose(); render(); toast(x.only ? (opt?.cats ? `Budget di ${mLong(next)} aggiornato` : "Fatto") : `${mLong(x.m)} chiuso · ${k} versamenti registrati${opt?.cats ? " · budget di " + mLong(next) + " impostato" : ""}`);
   } catch (e) { fail(e); const b = $("#clSave"); if (b) b.disabled = false; }
