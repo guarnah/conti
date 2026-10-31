@@ -583,12 +583,13 @@ function nextRenew(x) {
 }
 /* pagato per il periodo in corso: una spesa dal fondo dopo l'ultima scadenza (con 20 giorni di anticipo) */
 const subPaidNow = a => { const n = nextRenew(a); if (!n) return false; const from = addDaysISO(addMonthsISO(n, -perMonths(a)), -20); return S.fundTx.some(t => t.annId === a.id && (t.date || "") >= from); };
-const monthlyAccrual = () => (S.cfg?.annual || []).filter(a => !a.sub).reduce((s, a) => s + accrualOf(a), 0);
+const activeIn = (a, m) => !a.since || m >= a.since; // una voce aggiunta dopo accantona dal mese in cui l'hai aggiunta, non nei mesi già chiusi
+const monthlyAccrual = (m = S.month) => (S.cfg?.annual || []).filter(a => !a.sub && activeIn(a, m)).reduce((s, a) => s + accrualOf(a), 0);
 /* tutto quello che entra nel fondo (anche gli abbonamenti annuali) */
 const monthlyAccrualAll = () => (S.cfg?.annual || []).reduce((s, a) => s + accrualOf(a), 0);
-const accrualFor = m => started(m) ? monthlyAccrual() : 0;
+const accrualFor = m => started(m) ? monthlyAccrual(m) : 0;
 const annSubs = () => (S.cfg?.annual || []).filter(a => a.sub);
-const annSubsMonthly = () => annSubs().reduce((s, a) => s + accrualOf(a), 0);
+const annSubsMonthly = (m = S.month) => annSubs().filter(a => activeIn(a, m)).reduce((s, a) => s + accrualOf(a), 0);
 const SUBCAT = "abbonamenti";
 const recActive = (x, m = S.month) => (!x.from || m >= x.from) && (!x.to || m <= x.to);
 const subs = () => (S.cfg?.recurring || []).filter(x => x.cat === SUBCAT);
@@ -702,7 +703,7 @@ function computeMonth(txs, budCats, m) {
     if (isAvanzoTx(t)) continue; // l'avanzo spostato a fine mese viene dal conto, non dalle entrate del mese
     spent[t.cat] = (spent[t.cat] || 0) + (Number(t.amount) || 0);
   }
-  if (started(m) && annSubs().length) spent[SUBCAT] = (spent[SUBCAT] || 0) + annSubsMonthly();
+  if (started(m) && annSubs().length) spent[SUBCAT] = (spent[SUBCAT] || 0) + annSubsMonthly(m);
   const rows = (S.cfg?.categories || []).filter(c => !c.hidden || spent[c.id] || Number(budCats?.[c.id])).map(c => {
     const b = budOf(c, budCats, m), s = spent[c.id] || 0;
     let proj;
@@ -936,7 +937,7 @@ function viewMese() {
     if (!rows.length && !accRow) { h += potsMini() + (g.id === "ris" && fundHtml ? `<div class="wide-only">${fundHtml}</div>` : "") + `</div>`; continue; }
     const gb = rows.reduce((a, x) => a + x.b, 0) + (accRow ? r.acc : 0), gs = rows.reduce((a, x) => a + x.s, 0) + (accRow ? r.acc : 0);
     h += `<div class="card"><div class="card-h"><div><div class="card-t row"><span class="gd g-${g.id}"></span>${g.name}</div><div class="card-d">${g.d}</div></div><span class="badge bd-secondary mono">${eur0(gs)} / ${eur0(gb)}</span></div><div class="card-c flush">`;
-    if (accRow) { const bl = (S.cfg.annual || []).filter(isBill), bAcc = started(S.month) ? bl.reduce((s0, a) => s0 + accrualOf(a), 0) : 0, oAcc = r.acc - bAcc;
+    if (accRow) { const bl = (S.cfg.annual || []).filter(isBill), bAcc = started(S.month) ? bl.filter(a => activeIn(a, S.month)).reduce((s0, a) => s0 + accrualOf(a), 0) : 0, oAcc = r.acc - bAcc;
       const accLine = (act, icn, name, n, v, tip) => `<button class="crow cr2" data-act="${act}" title="${tip}"><div class="between"><span class="row grow"><span class="cic g-fondo">${ic(icn)}</span><span class="nm">${name}</span><span class="badge bd-outline">${n} voci</span></span><span class="vl mono"><b>${eur0(v)}</b>${r.acc ? "" : " · da " + esc(mShort(S.cfg.startMonth || curMonth()))}</span></div><div class="prog"><i style="width:${v ? 100 : 0}%;background:var(--muted-foreground)"></i></div></button>`;
       h += (bl.length ? accLine("open-bills", "bolt", "Bollette", bl.length, bAcc, "Quota mensile delle bollette di casa, ricalcolata dalle bollette pagate · tocca per vederle") + `<div class="sep"></div>` : "")
         + accLine("open-fund", "cal", "Spese annuali", (S.cfg.annual || []).filter(a => !a.sub && !isBill(a)).length, oAcc, "Tasse, quote, assicurazioni e auto divise per 12 · tocca per vedere e modificare le voci") + (rows.length ? `<div class="sep"></div>` : ""); }
@@ -963,8 +964,8 @@ function fundStatus(kind) {
   const start = S.cfg.startMonth || curMonth(); const now = curMonth();
   const n = now >= start ? monthDiff(start, now) + 1 : 0;
   const items = (S.cfg.annual || []).filter(a => kind === "bills" ? isBill(a) : kind === "annual" ? !isBill(a) : true), ids = new Set(items.map(a => a.id));
-  const months = a => { const f = learnFrom(a).slice(0, 7), s0 = f > start ? f : start; return now >= s0 ? monthDiff(s0, now) + 1 : 0; };
-  const accrued = (kind === "bills" ? 0 : Number(S.cfg.fundInitial) || 0) + (kind ? items.reduce((s, a) => s + accrualOf(a) * (kind === "bills" ? months(a) : n), 0) : monthlyAccrualAll() * n);
+  const months = a => { const f = isBill(a) ? learnFrom(a).slice(0, 7) : "", s0 = [start, f, a.since || ""].sort().pop(); return now >= s0 ? monthDiff(s0, now) + 1 : 0; };
+  const accrued = (kind === "bills" ? 0 : Number(S.cfg.fundInitial) || 0) + items.reduce((s, a) => s + accrualOf(a) * months(a), 0);
   const paid = S.fundTx.filter(t => !kind || (kind === "bills" ? ids.has(t.annId) : !(S.cfg.annual || []).some(a => a.id === t.annId && isBill(a)))).reduce((a, t) => a + (Number(t.amount) || 0), 0);
   const yr = now.slice(0, 4);
   const upcoming = items.filter(a => a.due || a.renew).map(a => {
@@ -2042,7 +2043,7 @@ async function saveFundItem() {
   const sc = {...(a.shareChanges || {})}; const nsv = Number(a.ns); if (a.ns !== "" && /^\d{4}-\d{2}-\d{2}$/.test(a.nsFrom || "") && isFinite(nsv) && nsv >= 0 && nsv <= 100) sc[a.nsFrom] = nsv;
   const item = {id:a.id, name, amount:r2(amount), share, shareChanges:sc, bill:!!a.bill, months:Number(a.months) || 12, renew, auto:!a.ask, learnFrom:/^\d{4}-\d{2}-\d{2}$/.test(a.learnFrom || "") ? a.learnFrom : null, due:renew ? Number(renew.slice(5, 7)) : (Number(a.due) || null)};
   const i = cfg.annual.findIndex(x => x.id === a.id);
-  if (i >= 0) cfg.annual[i] = {...cfg.annual[i], ...item}; else cfg.annual.push(item);
+  if (i >= 0) cfg.annual[i] = {...cfg.annual[i], ...item}; else cfg.annual.push({...item, since:firstOpenMonth()});
   $("#fSave").disabled = true;
   try { await S.db.doc("config/main").set(cfg); S.cfg = cfg; fundState = {mode:"list"}; drawFund(); render(); toast(i >= 0 ? "Voce aggiornata" : "Voce aggiunta"); }
   catch (e) { fail(e); const b = $("#fSave"); if (b) b.disabled = false; }
@@ -2119,7 +2120,7 @@ function putSub(cfg, x, name, amount) {
   const prevA = cfg.annual.find(y => y.id === x.id), existed = !!prevA || cfg.recurring.some(y => y.id === x.id);
   cfg.recurring = cfg.recurring.filter(y => y.id !== x.id); cfg.annual = cfg.annual.filter(y => y.id !== x.id);
   const renew = /^\d{4}-\d{2}-\d{2}$/.test(x.renew || "") ? x.renew : null, months = freqOf(x.freq).m, auto = !!x.auto;
-  if (months > 1) cfg.annual.push({...(prevA || {share:100}), id:x.id, name, amount:r2(amount), months, renew, auto, due:renew ? Number(renew.slice(5, 7)) : (prevA?.due ?? null), sub:prevA ? !!prevA.sub : true});
+  if (months > 1) cfg.annual.push({...(prevA || {share:100, since:firstOpenMonth()}), id:x.id, name, amount:r2(amount), months, renew, auto, due:renew ? Number(renew.slice(5, 7)) : (prevA?.due ?? null), sub:prevA ? !!prevA.sub : true});
   else cfg.recurring.push({id:x.id, name, amount:r2(amount), cat:SUBCAT, auto, ...(renew ? {renew} : {})});
   return existed;
 }
