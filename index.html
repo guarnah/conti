@@ -681,6 +681,7 @@ function budgetFor() {
 }
 
 /* ---------- calcoli del mese ---------- */
+const isAvanzoTx = t => !!t.avanzo || (t.cat === restCat() && /^Avanzo di /.test(t.note || ""));
 function computeMonth(txs, budCats, m) {
   const isCur = m === curMonth(), isPast = m < curMonth();
   const day = isCur ? new Date().getDate() : (isPast ? daysIn(m) : 0);
@@ -689,6 +690,7 @@ function computeMonth(txs, budCats, m) {
   for (const t of txs) {
     if (t.kind === "inc" || t.kind === "tax") continue; // le tasse si pagano dalla quota accantonata, non dal budget
     if (t.cat === "fondo" || t.from) continue; // spese annuali e spese pagate da un salvadanaio non pesano sul mese
+    if (isAvanzoTx(t)) continue; // l'avanzo spostato a fine mese viene dal conto, non dalle entrate del mese
     spent[t.cat] = (spent[t.cat] || 0) + (Number(t.amount) || 0);
   }
   if (started(m) && annSubs().length) spent[SUBCAT] = (spent[SUBCAT] || 0) + annSubsMonthly();
@@ -860,6 +862,11 @@ function viewMese() {
   { const mc = monthToClose(); const show = (S.month === curMonth() && mc) ? mc : (S.month < curMonth() && S.cfg.startMonth && S.month >= S.cfg.startMonth && !isClosed(S.month) ? S.month : null);
     if (show) h += `<div class="alert"><div class="row" style="align-items:flex-start">${ic("check")}<div><div class="t">Chiudi ${esc(mLong(show))}</div><div class="muted sm">Calcola l'avanzo e registra i versamenti di ${esc(mLong(addMonth(show, 1)))} in un passaggio</div></div></div><button class="btn b-default b-sm" data-act="cl-open" data-m="${esc(show)}">Chiudi il mese</button></div>`;
     else if (isClosed(S.month)) { const cl = S.cfg.closed[S.month]; h += `<div class="xs muted row" style="gap:6px">${ic("check")}Mese chiuso il ${esc(fmtDate(cl.date))}${cl.avanzo ? ` · avanzo ${eur(cl.avanzo)}` : ""}</div>`; } }
+  { // mese già chiuso in negativo senza aver scelto come recuperarlo: qui o nel mese dopo
+    const pm = addMonth(S.month, -1), negOf = (m, rr) => isClosed(m) && !S.cfg.closed[m].negDone && rr.spentTot - rr.income > 0.5 ? rr.spentTot - rr.income : 0;
+    let nm = null, nv = negOf(S.month, r); if (nv) nm = S.month;
+    else if (S.month === curMonth() && isClosed(pm) && !S.cfg.closed[pm].negDone && S.txLoaded) { nv = negOf(pm, computeMonth(S.expTx.filter(t => t.month === pm), S.prevBudget?.month === pm ? S.prevBudget.cats : null, pm)); if (nv) nm = pm; }
+    if (nm) h += `<div class="alert" style="border-color:var(--destructive)"><div class="row" style="align-items:flex-start">${ic("info")}<div><div class="t">${esc(mLong(nm))} chiuso in negativo di ${eur0(nv)}</div><div class="muted sm">Scegli se e come recuperarlo nei prossimi mesi</div></div></div><button class="btn b-default b-sm" data-act="cl-neg" data-m="${esc(nm)}">Gestisci</button></div>`; }
   if (S.month === curMonth()) h += nwRemindAlert();
   if (S.month === curMonth()) for (const d of taxStatus().open.filter(d => d.date <= addDaysISO(todayISO(), 10))) h += `<div class="alert"><div class="row" style="align-items:flex-start">${ic("receipt")}<div><div class="t">${esc(d.name)}: scade ${d.date === todayISO() ? "oggi" : d.date < todayISO() ? "il " + esc(fmtDateS(d.date)) + " (scaduta)" : "il " + esc(fmtDateS(d.date))}</div><div class="muted sm">${Number(d.amount) ? `<span class="mono">${eur(d.amount)}</span> · ` : ""}${d.pot === false ? "dal conto" : "dalla quota tasse"}</div></div></div><div class="row" style="gap:6px"><button class="btn b-default b-sm" data-act="tax-pay" data-id="${esc(d.id)}">Pagata</button><button class="btn b-outline b-sm" data-tab="entrate">Tasse</button></div></div>`;
   if (S.month === curMonth()) for (const x of expiredSubs()) { const fund = x.cat !== SUBCAT && !x.sub, when = x.renew === todayISO() ? "oggi" : "il " + esc(fmtDateS(x.renew));
@@ -1023,9 +1030,9 @@ function closeItems(m) {
   return [...rec, ...min, ...extraPots];
 }
 let closeState = null;
-function openClose(m) {
+function openClose(m, only = false) {
   const reserve = taxStatus().open.filter(d => d.pot === false && d.date <= addDaysISO(lastDay(addMonth(m, 1)), 0) && d.date > lastDay(m)).map(d => ({name:d.name, date:d.date, amount:Number(d.amount) || 0}));
-  closeState = {m, saldo:"", soglia:String(S.cfg.closeThreshold ?? 3000), reserve, items:closeItems(m), avanzoStr:null, step:1, bud:null, budChoice:null};
+  closeState = {m, only, saldo:"", soglia:String(S.cfg.closeThreshold ?? 3000), reserve:only ? [] : reserve, items:only ? [] : closeItems(m), avanzoStr:null, step:1, bud:null, budChoice:null};
   loadCloseBudgets(closeState);
   const bg = document.createElement("div"); bg.className = "ovl"; bg.id = "clBg";
   bg.innerHTML = `<div class="drawer" role="dialog" aria-modal="true" aria-labelledby="clTitle" id="cld"></div>`;
@@ -1079,9 +1086,12 @@ function closeRecover() { // piano di recupero dopo la scelta sul debito (solo i
 }
 function closeGap() {
   const x = closeState, c = closeCalc(), b = x.bud; if (!b || b.error) return {gap:0, cash:false, over:[], d:0};
-  const d = Math.max(0, b.r.spentTot - b.r.income), cash = c.ok ? Math.max(0, c.soglia + c.res + c.fixed - c.saldo - closeDebt().pending) : null;
+  const d = r2(Math.max(0, b.r.spentTot - b.r.income)), cash = c.ok ? r2(Math.max(0, c.soglia + c.res + c.fixed - c.saldo - closeDebt().pending)) : null;
   const over = b.r.rows.filter(y => isVarCat(y.c) && y.s > y.b + 0.5).sort((p, q) => (q.s - q.b) - (p.s - p.b));
-  return {gap:r2(cash != null ? cash : d), cash:cash != null, over, d};
+  // il conto sotto la soglia ha la precedenza; altrimenti conta il mese chiuso oltre le entrate, anche se il conto regge
+  if (cash != null && cash > 0.5) return {gap:cash, cash:true, over, d, kind:"cash"};
+  if (d > 0.5) return {gap:d, cash:false, cashOk:cash != null, over, d, kind:"month"};
+  return {gap:0, cash:cash != null, over, d, kind:null};
 }
 function closeOptions() {
   const x = closeState, b = x.bud; if (!b || b.error) return [];
@@ -1094,7 +1104,7 @@ function closeOptions() {
     if (casa) opts.push({k:"casa", t:`Versa meno nel ${casa.name.replace(/ \(minimo\)$/, "")}`, d:casa.amount >= g.gap ? `${eur0(casa.amount)} → ${eur0(casa.amount - g.gap)} a ${mLong(next)}: il budget delle spese resta uguale` : `Il versamento scende a 0 € (−${eur0(casa.amount)}) e i restanti ${eur0(g.gap - casa.amount)} si tolgono dalle spese variabili`, cats:casa.amount >= g.gap ? base : cutVar(base, g.gap - casa.amount), planNext:Math.max(0, r2(g.gap - casa.amount)), full:base, casa:Math.max(0, r2(casa.amount - g.gap))});
     opts.push({k:"cut", t:`Taglia le spese variabili di ${mLong(next)}`, d:`${eur0(g.gap)} in meno, divisi tra le voci variabili in proporzione al loro budget`, cats:cutVar(base, g.gap), planNext:g.gap, full:base});
     opts.push({k:"spread", t:"Recupera in 3 mesi", d:`${eur0(g.gap / 3)} in meno al mese sulle voci variabili, da ${mLong(next)} a ${mLong(addMonth(next, 2))}`, cats:base, spread:r2(g.gap / 3)});
-    opts.push({k:"same", t:"Non cambiare il budget", d:g.cash ? `Il conto resta ${eur0(g.gap)} sotto la soglia: lo coprirai con le prossime entrate` : "Il disavanzo resta coperto dal margine sul conto", cats:base});
+    opts.push({k:"same", t:g.cashOk ? "Non recuperarlo" : "Non cambiare il budget", d:g.cash ? `Il conto resta ${eur0(g.gap)} sotto la soglia: lo coprirai con le prossime entrate` : g.cashOk ? "Il conto è comunque sopra la soglia: il negativo è già coperto" : "Il disavanzo resta coperto dal margine sul conto", cats:base});
   } else {
     opts.push({k:"same", t:b.nextSaved ? `Tieni il budget già impostato per ${mLong(next)}` : `Stesso budget di ${mLong(x.m)}${Number(S.cfg.recover?.[x.m]) ? ", senza la riduzione" : ""}`, d:g.over.length ? "Anche se alcune voci sono state sforate" : "Il mese è andato come previsto", cats:base});
     opts.push({k:"real", t:`Adegua alle spese reali di ${mLong(x.m)}`, d:"Ogni voce variabile prende quanto hai speso davvero, arrotondato a 5 €", cats:real});
@@ -1110,10 +1120,10 @@ function closeBudHtml() {
   if (!x.bud) return `<div class="xs muted">Carico il budget…</div>`;
   if (x.bud.error) return `<div class="xs muted">Non riesco a leggere il budget: lo imposti dalla sezione Budget.</div>`;
   const dopts = closeDebtOptions(), dt = closeDebt(), dsig = dopts.map(o => o.k).join(); if (dopts.length && (x.debtSig !== dsig || !dopts.some(o => o.k === x.debtChoice))) { x.debtSig = dsig; x.debtChoice = dopts[0].k; }
-  const g = closeGap(), opts = closeOptions(), mode = g.gap > 0.5 ? "gap" : "ok"; if (x.budMode !== mode || !opts.some(o => o.k === x.budChoice)) { x.budMode = mode; x.budChoice = opts[0].k; }
+  const g = closeGap(), opts = closeOptions(), mode = g.gap > 0.5 ? "gap" : "ok"; if (x.budMode !== mode || !opts.some(o => o.k === x.budChoice)) { x.budMode = mode; x.budChoice = mode === "gap" ? null : opts[0].k; } // col negativo la scelta è tua: niente preselezione
   const sel = opts.find(o => o.k === x.budChoice);
   const debt = dopts.length ? `<div class="sm">Piano di recupero in corso: <b class="mono">${eur0(dt.pending)}</b> ancora da recuperare${dt.est <= 0.5 ? ", ma il conto è già tornato in pari" : dt.est < dt.pending - 0.5 ? `, ma ne mancano davvero <b class="mono">${eur0(dt.est)}</b>` : ""}.</div><div class="stack" style="gap:6px" role="radiogroup" aria-label="Debito">${dopts.map(o => `<label class="clopt${o.k === x.debtChoice ? " on" : ""}"><input type="radio" name="clDebt" value="${o.k}" ${o.k === x.debtChoice ? "checked" : ""}><span><span class="t">${esc(o.t)}</span><span class="xs muted">${esc(o.d)}</span></span></label>`).join("")}</div><div class="sep" style="margin:4px 0"></div>` : "";
-  const head = g.gap > 0.5 ? `<div class="sm" style="color:var(--destructive)">${g.cash ? `Dopo i versamenti il conto resta <b class="mono">${eur0(g.gap)}</b> sotto la soglia` : `${esc(mLong(x.m))} è andato oltre le entrate di <b class="mono">${eur0(g.gap)}</b>`}. Come lo recuperi?</div>`
+  const head = g.gap > 0.5 ? `<div class="sm" style="color:var(--destructive)">${g.cash ? `Dopo i versamenti il conto resta <b class="mono">${eur0(g.gap)}</b> sotto la soglia` : `${esc(mLong(x.m))} è andato oltre le entrate di <b class="mono">${eur0(g.gap)}</b>${g.cashOk ? " (il conto però è sopra la soglia)" : ""}`}. Come vuoi gestirlo? Scegli un'opzione.</div>`
     : g.over.length ? `<div class="sm muted">Sforate: ${g.over.slice(0, 3).map(y => `${esc(y.c.name)} <span class="mono" style="color:var(--destructive)">+${eur0(y.s - y.b)}</span>`).join(", ")}</div>` : `<div class="sm muted">Nessuna voce sforata.</div>`;
   let prev = "";
   if (sel?.cats) {
@@ -1133,6 +1143,10 @@ function closeCalc() {
 function readClose() { const x = closeState; if (!x) return; const rb = document.querySelector('#cld input[name=clBud]:checked'); if (rb) x.budChoice = rb.value; const rd = document.querySelector('#cld input[name=clDebt]:checked'); if (rd) x.debtChoice = rd.value; if ($("#clSaldo")) x.saldo = $("#clSaldo").value; if ($("#clSoglia")) x.soglia = $("#clSoglia").value; if ($("#clAv")) x.avanzoStr = $("#clAv").value === "" ? null : $("#clAv").value; document.querySelectorAll("#cld [data-cli]").forEach(r => { const it = x.items[Number(r.dataset.cli)]; it.on = r.querySelector("input[type=checkbox]").checked; const v = parseAmt(r.querySelector("[data-f=amt]").value); if (isFinite(v)) it.amount = v; }); }
 function drawClose() {
   const el = $("#cld"), x = closeState; if (!el || !x) return; const c = closeCalc(), next = addMonth(x.m, 1), rest = catById(restCat())?.name || "Salvadanaio";
+  if (x.only) { el.innerHTML = `<div class="handle-zone"><div class="handle"></div></div>
+    <div class="between"><div><h2 id="clTitle" style="font-size:17px;font-weight:600">Negativo di ${esc(mLong(x.m))}</h2><p class="muted sm">Il mese è già chiuso: scegli come recuperarlo da ${esc(mLong(next))}</p></div><button class="btn b-ghost b-icon b-sm" data-act="cl-close" aria-label="Chiudi">${ic("x")}</button></div>
+    <div class="stack" style="gap:8px">${closeBudHtml()}</div>
+    <div class="dfoot"><span class="grow"></span><button class="btn b-outline" data-act="cl-close">Annulla</button><button class="btn b-default" data-act="cl-save" id="clSave">${ic("check")}Applica</button></div>`; return; }
   el.innerHTML = `<div class="handle-zone"><div class="handle"></div></div>
     <div class="between"><div><h2 id="clTitle" style="font-size:17px;font-weight:600">Chiudi ${esc(mLong(x.m))}</h2><p class="muted sm">Avanzo del mese e versamenti di ${esc(mLong(next))}</p></div><button class="btn b-ghost b-icon b-sm" data-act="cl-close" aria-label="Chiudi">${ic("x")}</button></div>
     <div class="clstep"><div class="cln">1</div><div class="stack grow" style="gap:10px"><div style="font-weight:600">Saldo del conto corrente</div>
@@ -1155,25 +1169,28 @@ function closeFinalItems() {
 }
 async function saveClose() {
   readClose(); const x = closeState, c = closeCalc(), next = addMonth(x.m, 1), now = Date.now();
-  if (!c.ok && x.avanzoStr == null) return toast("Scrivi il saldo del conto");
+  if (!x.only && !c.ok && x.avanzoStr == null) return toast("Scrivi il saldo del conto");
+  if (x.bud && !x.bud.error && closeGap().gap > 0.5 && !x.budChoice) { toast(`Scegli come gestire il negativo di ${mLong(x.m)}`); document.querySelector("#cld input[name=clBud]")?.closest(".clstep")?.scrollIntoView({behavior:"smooth", block:"center"}); return; }
+  if (!x.bud) return toast("Un attimo, sto caricando il budget");
   $("#clSave").disabled = true;
   try {
     let k = 0;
     const opt = x.bud && !x.bud.error ? closeOptions().find(o => o.k === x.budChoice) : null, items = closeFinalItems();
-    for (const it of items.filter(i => i.on && i.amount > 0)) await S.db.collection("tx").doc().set({kind:"exp", cat:it.cat, amount:r2(it.amount), date:next + "-01", month:next, note:it.name, tag:"", ...(it.recId ? {recId:it.recId} : {}), created:now + k++});
-    if (c.avanzo > 0 && restCat()) await S.db.collection("tx").doc().set({kind:"exp", cat:restCat(), amount:r2(c.avanzo), date:lastDay(x.m), month:x.m, note:"Avanzo di " + mLong(x.m), tag:"", created:now + k++});
+    const neg = x.bud && !x.bud.error && closeGap().gap > 0.5;
+    if (!x.only) for (const it of items.filter(i => i.on && i.amount > 0)) await S.db.collection("tx").doc().set({kind:"exp", cat:it.cat, amount:r2(it.amount), date:next + "-01", month:next, note:it.name, tag:"", ...(it.recId ? {recId:it.recId} : {}), created:now + k++});
+    if (!x.only && c.avanzo > 0 && restCat()) await S.db.collection("tx").doc().set({kind:"exp", cat:restCat(), amount:r2(c.avanzo), date:lastDay(x.m), month:x.m, note:"Avanzo di " + mLong(x.m), tag:"", avanzo:true, created:now + k++});
     const rec = x.bud && !x.bud.error ? closeRecover() : null;
     if (opt?.cats) { const clean = o => { const r = {}; for (const [kk, v] of Object.entries(o || {})) if (catById(kk) && kk !== restCat()) r[kk] = r2(Number(v) || 0); return r; }, out = clean(opt.cats), full = clean(opt.full);
       await S.db.doc("budgets/" + next).set({month:next, cats:out, ...(JSON.stringify(full) !== JSON.stringify(out) ? {full} : {}), saved:Date.now()}); }
-    const cfg = structuredClone(S.cfg); cfg.closed = {...(cfg.closed || {}), [x.m]:{date:todayISO(), avanzo:r2(c.avanzo), saldo:c.ok ? r2(c.saldo) : null, ...(opt ? {budget:opt.k} : {})}};
+    const cfg = structuredClone(S.cfg); cfg.closed = {...(cfg.closed || {}), [x.m]:x.only ? {...(cfg.closed?.[x.m] || {}), budget:opt?.k, negDone:true} : {date:todayISO(), avanzo:r2(c.avanzo), saldo:c.ok ? r2(c.saldo) : null, ...(opt ? {budget:opt.k} : {}), ...(neg ? {negDone:true} : {})}};
     if (rec) { const nr = {...rec}; if (opt?.spread) [0, 1, 2].forEach(i => { const mm = addMonth(next, i); nr[mm] = r2((Number(nr[mm]) || 0) + opt.spread); });
       if (opt?.planNext) nr[next] = r2((Number(nr[next]) || 0) + opt.planNext);
       const kept = Object.fromEntries(Object.entries(cfg.recover || {}).filter(([mm]) => mm === x.m)); // il recupero del mese chiuso resta come storico
       cfg.recover = {...kept, ...nr}; if (!Object.keys(cfg.recover).length) delete cfg.recover;
       const dch = closeDebtOptions().length ? x.debtChoice : null; if (dch) cfg.closed[x.m].debt = dch; }
-    const th = parseAmt(x.soglia); if (isFinite(th)) cfg.closeThreshold = r2(th);
+    const th = parseAmt(x.soglia); if (!x.only && isFinite(th)) cfg.closeThreshold = r2(th);
     await S.db.doc("config/main").set(cfg); S.cfg = cfg;
-    closeClose(); render(); toast(`${mLong(x.m)} chiuso · ${k} versamenti registrati${opt?.cats ? " · budget di " + mLong(next) + " impostato" : ""}`);
+    closeClose(); render(); toast(x.only ? (opt?.cats ? `Budget di ${mLong(next)} aggiornato` : "Fatto") : `${mLong(x.m)} chiuso · ${k} versamenti registrati${opt?.cats ? " · budget di " + mLong(next) + " impostato" : ""}`);
   } catch (e) { fail(e); const b = $("#clSave"); if (b) b.disabled = false; }
 }
 /* ---------- patrimonio: saldi dei conti a fine mese ---------- */
@@ -2190,6 +2207,7 @@ document.addEventListener("click", async e => {
   if (act === "sim-preset") { const v = {...simVals()}; if (a.dataset.v === "noinv") v.inv = 0; else { v.inv = 0; v.fix = 2600; } S.sim = v; render(); toast(a.dataset.v === "post" ? "Esempio: stipendio 2.600 €, niente fatture" : "Fatture a zero"); return; }
   if (act === "go-prev") { $("#prevM").click(); return; }
   if (act === "cl-open") return openClose(a.dataset.m);
+  if (act === "cl-neg") return openClose(a.dataset.m, true);
   if (act === "cl-close") return closeClose();
   if (act === "cl-save") return saveClose();
   if (act === "nw-edit") return openNw();
