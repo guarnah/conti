@@ -644,11 +644,13 @@ function grossIn(m) {
   return S.incTx.filter(t => t.month === m && !isFixedSrc(t.src) && !isExtraSrc(t.src)).reduce((a, t) => a + (Number(t.gross) || 0), 0);
 }
 /* entrate mensili = importi fissi (borsa) + netto fatturato negli ultimi 12 mesi / 12 */
+const invPct = () => { const v = Number(S.cfg?.invoicePct); return v > 0 && v <= 100 ? v : 100; };
 function incomeFor(m) {
   let pool = 0; for (let k = addMonth(m, -11); k <= m; k = addMonth(k, 1)) pool += invoicedIn(k);
   const fixed = fixedMonthly(m);
   const extra = S.incTx.filter(t => t.month === m && isExtraSrc(t.src)).reduce((a, t) => a + (Number(t.amount) || 0), 0);
-  return {fixed, pool, extra, monthly:fixed + pool / 12 + extra, invoiced:invoicedIn(m)};
+  const pct = invPct(), counted = pool * pct / 100; // prudenza: si conta solo una parte della media delle fatture
+  return {fixed, pool, counted, pct, extra, monthly:fixed + counted / 12 + extra, invoiced:invoicedIn(m)};
 }
 
 function recBudget(o, m = S.month) { // categorie con ricorrenti a periodo: budget = ricorrenti attive nel mese
@@ -869,15 +871,18 @@ function viewMese() {
     else if (S.month === curMonth() && isClosed(pm) && !S.cfg.closed[pm].negDone && S.txLoaded) { nv = negOf(pm, computeMonth(S.expTx.filter(t => t.month === pm), S.prevBudget?.month === pm ? S.prevBudget.cats : null, pm)); if (nv) nm = pm; }
     if (nm) h += `<div class="alert" style="border-color:var(--destructive)"><div class="row" style="align-items:flex-start">${ic("info")}<div><div class="t">${esc(mLong(nm))} chiuso in negativo di ${eur0(nv)}</div><div class="muted sm">Scegli se e come recuperarlo nei prossimi mesi</div></div></div><button class="btn b-default b-sm" data-act="cl-neg" data-m="${esc(nm)}">Gestisci</button></div>`; }
   if (S.month === curMonth()) h += nwRemindAlert();
+  if (S.month === curMonth()) { const z = (S.cfg.annual || []).filter(a => !a.sub && !(Number(a.amount) > 0)); if (z.length) h += `<div class="alert"><div class="row" style="align-items:flex-start">${ic("info")}<div><div class="t">Spese annuali senza importo: ${esc(z.map(a => a.name).join(", "))}</div><div class="muted sm">Finché sono a 0 € non vengono accantonate e il budget mensile risulta più alto del vero</div></div></div><button class="btn b-outline b-sm" data-act="open-fund" data-k="annual">Sistema</button></div>`; }
   if (S.month === curMonth()) for (const d of taxStatus().open.filter(d => d.date <= addDaysISO(todayISO(), 10))) h += `<div class="alert"><div class="row" style="align-items:flex-start">${ic("receipt")}<div><div class="t">${esc(d.name)}: scade ${d.date === todayISO() ? "oggi" : d.date < todayISO() ? "il " + esc(fmtDateS(d.date)) + " (scaduta)" : "il " + esc(fmtDateS(d.date))}</div><div class="muted sm">${Number(d.amount) ? `<span class="mono">${eur(d.amount)}</span> · ` : ""}${d.pot === false ? "dal conto" : "dalla quota tasse"}</div></div></div><div class="row" style="gap:6px"><button class="btn b-default b-sm" data-act="tax-pay" data-id="${esc(d.id)}">Pagata</button><button class="btn b-outline b-sm" data-tab="entrate">Tasse</button></div></div>`;
   if (S.month === curMonth()) for (const x of expiredSubs()) { const fund = x.cat !== SUBCAT && !x.sub, when = x.renew === todayISO() ? "oggi" : "il " + esc(fmtDateS(x.renew));
     h += `<div class="alert"><div class="row" style="align-items:flex-start">${ic(fund ? "receipt" : "cal")}<div><div class="t">${fund ? `${esc(x.name)}: scadenza ${when}` : `${esc(x.name)} è scaduto ${when}`}</div><div class="muted sm">${esc(eur(x.amount) + " " + freqOf(x.cat === SUBCAT ? 1 : perMonths(x)).per)} · ${fund ? "pagata? Registrala e aggiorna l'importo" : "vuoi rinnovarlo o interromperlo?"}</div></div></div><div class="row" style="gap:6px;flex-wrap:wrap"><button class="btn b-default b-sm" data-act="sub-renew" data-id="${esc(x.id)}">${fund ? "Pagata" : "Rinnova"}</button><button class="btn b-outline b-sm" data-act="sub-stop" data-id="${esc(x.id)}">${fund ? "Non c'è più" : "Interrompi"}</button></div></div>`; }
   if (restCat() && started(S.month)) { const rr = restFor(bud.cats), mn = restMin(), rn = catById(restCat()).name;
     if (rr < -0.5) h += `<div class="alert" style="border-color:var(--destructive)"><div class="row" style="align-items:flex-start;color:var(--destructive)">${ic("info")}<div><div class="t">Budget oltre le entrate di ${eur0(-rr)}</div><div class="sm">${esc(rn)} è a zero. Riduci qualche voce nella sezione Budget.</div></div></div><button class="btn b-outline b-sm" data-act="goto-budget">Budget</button></div>`;
     else if (rr < mn - 0.5) h += `<div class="alert" style="border-color:var(--destructive)"><div class="row" style="align-items:flex-start;color:var(--destructive)">${ic("info")}<div><div class="t">${esc(rn)} sotto il minimo: ${eur0(rr)} su ${eur0(mn)}</div><div class="sm">Riduci altre voci di ${eur0(mn - rr)} nella sezione Budget.</div></div></div><button class="btn b-outline b-sm" data-act="goto-budget">Budget</button></div>`; }
+  const fixedLeft = r.rows.filter(x => x.c.fixed).reduce((a, x) => a + Math.max(0, x.b - x.s), 0), heroV = r.isPast ? left : left - fixedLeft;
   h += `<div class="card hero"><div class="card-c stack" style="gap:14px">
-    <div class="between" style="align-items:flex-start;flex-wrap:wrap"><div><div class="lbl">${r.isPast ? "Avanzo a fine mese" : "Disponibile questo mese"}</div>
-      <div class="row" style="align-items:baseline;gap:14px;flex-wrap:wrap"><div class="big mono" data-v="${r2(left)}" data-k="${S.month}" style="color:${left < 0 ? "var(--destructive)" : "var(--foreground)"}">${eur(left)}</div>${perDayHtml(r, left)}</div></div>
+    <div class="between" style="align-items:flex-start;flex-wrap:wrap"><div><div class="lbl">${r.isPast ? "Avanzo a fine mese" : "Puoi ancora spendere"}</div>
+      <div class="row" style="align-items:baseline;gap:14px;flex-wrap:wrap"><div class="big mono" data-v="${r2(heroV)}" data-k="${S.month}" style="color:${heroV < 0 ? "var(--destructive)" : "var(--foreground)"}">${eur(heroV)}</div>${perDayHtml(r, left)}</div>
+      ${!r.isPast && fixedLeft > 0.5 ? `<div class="xs muted" style="margin-top:4px">Oltre a <span class="mono">${eur0(fixedLeft)}</span> già destinati a voci fisse e risparmi ancora da pagare</div>` : ""}</div>
       ${r.isCur ? `<span class="badge ${projLeft < 0 ? "bd-destructive" : "bd-success"}">${ic(projLeft < 0 ? "down" : "up")}<span class="mono">${sgn(projLeft)}</span> a fine mese</span>` : ""}</div>
     ${progHtml(r.spentTot, r.budTot, r.isCur ? r.projTot : 0, true)}
     <div class="between muted sm"><span>Speso <b class="mono" style="color:var(--foreground);font-weight:500">${eur0(r.spentTot)}</b> di <span class="mono">${eur0(r.budTot)}</span></span><span class="mono">${pct}%</span></div>
@@ -1422,7 +1427,7 @@ function simDefaults() {
   const fixed = r.rows.filter(x => x.c.group !== "ris" && (x.c.fixed || isAuto(x.c))).reduce((a, x) => a + x.b, 0) + r.acc;
   const vari = r.rows.filter(x => x.c.group !== "ris" && !x.c.fixed && !isAuto(x.c)).reduce((a, x) => a + x.b, 0);
   const home = catById(restCat()), hp = home ? potStatus(home.id) : null, em = catById("emergenze");
-  return {fix:Math.round(inc.fixed), inv:Math.round(inc.pool / 12), fspese:Math.round(fixed), vspese:Math.round(vari), goal:Math.round(Number(home?.potGoal) || 60000), saved:Math.round(hp?.avail || 0), em:Math.round(em ? potStatus(em.id).avail : 0)};
+  return {fix:Math.round(inc.fixed), inv:Math.round(inc.counted / 12), fspese:Math.round(fixed), vspese:Math.round(vari), goal:Math.round(Number(home?.potGoal) || 60000), saved:Math.round(hp?.avail || 0), em:Math.round(em ? potStatus(em.id).avail : 0)};
 }
 const SIMF = [["fix", "Borsa o stipendio €", "netto al mese"], ["inv", "Fatture nette €", "media al mese"], ["fspese", "Spese fisse €", "affitto, abbonamenti, quota delle spese annuali"], ["vspese", "Spese variabili €", "spesa, uscite, viaggi…"], ["goal", "Obiettivo casa €", ""], ["saved", "Già per la casa €", ""], ["em", "Fondo emergenze €", ""]];
 function simOut(v) {
@@ -1643,10 +1648,12 @@ function viewEntrate() {
   return `<div id="entrate" class="stack">
   <div class="between" style="align-items:flex-end;gap:12px"><div><h1 class="pt">Entrate</h1><p class="muted sm">Borsa, fatture e altre entrate</p></div><button class="btn b-default b-sm" data-act="inc-new" style="flex:none">${ic("plus")}Nuova entrata</button></div>
   <div class="card hero"><div class="card-c stack" style="gap:14px"><div><div class="lbl has-tip" tabindex="0" aria-describedby="incTip2" style="display:inline-block">Entrate mensili di ${esc(mLong(S.month))} <span class="tip-i" aria-hidden="true">?</span><div class="tip" role="tooltip" id="incTip2">Le fatture contano per 1/12 del netto per 12 mesi: oggi il totale degli ultimi 12 mesi è <span class="mono">${eur0(inc.pool)}</span>. Le entrate extra contano solo nel mese in cui arrivano. La borsa entra da sola ogni mese.</div></div><div class="big mono">${eur(inc.monthly)}</div></div>
-    <div class="stats"><div class="stat" style="padding:0"><div class="l">Fissi (borsa)</div><div class="v mono">${eur0(inc.fixed)}</div></div><div class="stat" style="padding:0"><div class="l">Fatture ÷ 12</div><div class="v mono">${eur0(inc.pool / 12)}</div></div><div class="stat" style="padding:0"><div class="l">Extra del mese</div><div class="v mono">${eur0(inc.extra)}</div></div></div>
+    <div class="stats"><div class="stat" style="padding:0"><div class="l">Fissi (borsa)</div><div class="v mono">${eur0(inc.fixed)}</div></div><div class="stat" style="padding:0"><div class="l">Fatture ÷ 12${inc.pct < 100 ? ` · ${inc.pct}%` : ""}</div><div class="v mono">${eur0(inc.counted / 12)}</div></div><div class="stat" style="padding:0"><div class="l">Extra del mese</div><div class="v mono">${eur0(inc.extra)}</div></div></div>
 </div></div>
   <div class="card"><div class="card-h"><div><div class="card-t">Registrate a ${esc(mLong(S.month))}</div><div class="card-d">${list.length ? `${list.length} ${list.length === 1 ? "entrata" : "entrate"} · netto <span class="mono">${eur(tot)}</span>` : "Nessuna entrata registrata"}</div></div></div>
     ${list.length ? `<div class="card-c flush">${list.map(txRow).join("")}</div>` : ""}</div>
+  <div class="card"><div class="card-c between" style="gap:10px;flex-wrap:wrap"><div><div class="card-t" style="font-size:14px">Prudenza sulle fatture</div><div class="card-d">Quanta parte della media delle fatture usare per il budget. Sotto il 100% il budget resta più basso e quello che entra in più diventa avanzo.${inc.pct < 100 ? ` Oggi conti <span class="mono">${eur0(inc.counted / 12)}</span> invece di <span class="mono">${eur0(inc.pool / 12)}</span> al mese.` : ""}</div></div>
+    <select id="invPct" class="inp" style="width:auto" aria-label="Quota delle fatture da contare">${[100, 95, 90, 85, 80, 75, 70].map(v => `<option value="${v}" ${inc.pct === v ? "selected" : ""}>${v}%${v === 100 ? " (tutta la media)" : ""}</option>`).join("")}</select></div></div>
   ${taxCard()}
   ${sourcesCard(c)}
   ${histCard(c)}
@@ -1821,7 +1828,7 @@ const potAvailFor = (st, id) => potStatus(id).avail + (st.id && S.expTx.find(t =
 function fromHint(st) {
   if (!st.from || !catById(st.from)) return "Conta nel budget di questo mese.";
   const amt = parseAmt(st.amountStr), left = potAvailFor(st, st.from) - (isFinite(amt) ? amt : 0);
-  return `Esce da ${esc(catById(st.from).name)} e non pesa sul budget del mese · ${left < 0 ? `<span style="color:var(--destructive)">supera il saldo di <span class="mono">${eur(-left)}</span></span>` : `restano <span class="mono">${eur(left)}</span>`}`;
+  return `Esce da ${esc(catById(st.from).name)} e non pesa sul budget del mese · ${left < 0 ? `<span style="color:var(--destructive)">supera il saldo di <span class="mono">${eur(-left)}</span>${st.id ? "" : ": questa parte peserà sul budget del mese"}</span>` : `restano <span class="mono">${eur(left)}</span>`}`;
 }
 /* ultime spese diverse inserite a mano, per ripeterle con un tocco */
 function lastExpenses() {
@@ -1867,10 +1874,13 @@ async function saveSheet() {
     if (st.from && canFrom(st) && isPot(catById(st.from))) doc.from = st.from;
     if (st.recId) doc.recId = st.recId;
   }
+  let over = null; // spesa da un salvadanaio che non basta: la parte in più pesa sul budget del mese
+  if (doc.from && !st.id) { const av = Math.max(0, r2(potAvailFor(st, doc.from))); if (doc.amount > av + 0.005) { over = {...doc, amount:r2(doc.amount - av), note:(doc.note ? doc.note + " · " : "") + "oltre il salvadanaio", created:doc.created + 1}; delete over.from; if (av > 0) doc.amount = av; else { delete doc.from; over = null; } } }
   $("#sSave").disabled = true;
   try {
     const ref = st.id ? S.db.doc("tx/" + st.id) : S.db.collection("tx").doc();
     await ref.set(doc);
+    if (over) await S.db.collection("tx").doc().set(over);
     if (doc.tag && !(S.cfg.tags || []).includes(doc.tag)) { const cfg = structuredClone(S.cfg); cfg.tags = [...(cfg.tags || []), doc.tag]; S.cfg = cfg; S.db.doc("config/main").set(cfg).catch(fail); }
     closeSheet();
     toast(st.id ? "Movimento modificato" : (doc.month !== S.month ? `Salvato in ${mLong(doc.month)}` : "Movimento salvato"));
@@ -2309,6 +2319,7 @@ document.addEventListener("change", e => {
   if (e.target.id === "abAuto" && subState?.item && $("#abHint")) { readSubInputs(); $("#abHint").innerHTML = subHint(subState.item); }
   if (e.target.id === "fcat") { S.catFilter = e.target.value; render(); }
   if (e.target.id === "nwRem") { saveNwRemind(e.target.value); return; }
+  if (e.target.id === "invPct") { const cfg = structuredClone(S.cfg); cfg.invoicePct = Number(e.target.value); S.db.doc("config/main").set(cfg).then(() => { S.cfg = cfg; render(); toast(`Fatture contate al ${cfg.invoicePct}%`); }).catch(fail); return; }
   if (e.target.id === "sAnn" && sheetState) { readSheetInputs(); sheetState.covers = undefined; drawSheet(); }
   if (e.target.id === "ftag") { if (e.target.value) openTag(e.target.value); }
   if ((e.target.id === "backupFile" || e.target.id === "backupFile0") && e.target.files?.[0]) { const f = e.target.files[0]; f.text().then(async txt => { try { const n = await window.__cloud.importBackup(JSON.parse(txt)); S.trendCache = null; toast(`Importati ${n} elementi`); } catch (er) { console.error(er); toast("File di backup non valido"); } e.target.value = ""; }); }
