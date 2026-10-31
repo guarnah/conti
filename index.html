@@ -333,8 +333,10 @@ details.hist summary{padding-bottom:18px}
 .pie-l i{width:10px;height:10px;border-radius:3px;flex:none;display:inline-block}
 @media (max-width:480px){.pie{grid-template-columns:1fr}.pie svg{max-width:200px;margin:0 auto}}
 .wide-only{display:none}
+.pgrid{display:flex;flex-direction:column;gap:12px}.pgrid .pots-h{margin-top:12px}
+@media (min-width:1100px){.pgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px;align-items:start}.pgrid .pots-h{margin-top:0}}
 @media (min-width:1100px){
-  .hdr .in,body[data-view="mese"] .wrap,body[data-view="budget"] .wrap{max-width:1240px}
+  .hdr .in,body[data-view="mese"] .wrap,body[data-view="budget"] .wrap,body[data-view="salvadanai"] .wrap{max-width:1240px}
   .gcols{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:start}
   .wide-only{display:block}
   body[data-view="movimenti"] .wrap{max-width:1240px}
@@ -1292,7 +1294,7 @@ function nwLines(ids, accs) {
   if (pts.length < 2) return `<p class="xs muted">Il grafico dei singoli conti compare dal secondo aggiornamento dei saldi.</p>`;
   const COL = ["var(--chart-3)", "var(--chart-2)", "var(--chart-1)", "var(--chart-4)", "var(--income)", "var(--muted-foreground)", "var(--destructive)"];
   const t = d => new Date(d + "T12:00:00").getTime(), t0 = t(pts[0].d), t1 = Math.max(t(pts.at(-1).d), t0 + 864e5);
-  const wide = innerWidth >= 1100, W = wide ? 1180 : Math.max(320, Math.min(640, innerWidth - 40)), H = wide ? 210 : 180, pl = 40, pr = 12, pt = 10, pb = 22;
+  const wide = innerWidth >= 1100, W = wide ? 620 : Math.max(320, Math.min(640, innerWidth - 40)), H = wide ? 200 : 180, pl = 40, pr = 12, pt = 10, pb = 22;
   const max = Math.max(1, ...pts.flatMap(p => ids.map(id => Number(p.b[id]) || 0))) * 1.08;
   const X = d => pl + (W - pl - pr) * (t(d) - t0) / (t1 - t0), Y = v => pt + (H - pt - pb) * (1 - v / max);
   const k = v => v >= 1000 ? (v / 1000).toLocaleString("it-IT", {maximumFractionDigits:1}) + "k" : String(Math.round(v));
@@ -1361,15 +1363,16 @@ function viewSalvadanai() {
   if (S.potView) return viewPot();
   const pl = pots().map(c => ({c, ...potStatus(c.id)}));
   const tot = pl.reduce((a, p) => a + p.avail, 0);
-  let h = nwCard() + `<div class="between" style="align-items:flex-end;gap:12px;margin-top:12px"><div><h2 class="pt" style="font-size:20px">Salvadanai</h2><p class="muted sm">Quanto hai da parte. Una spesa pagata da un salvadanaio non pesa sul budget del mese.</p></div><button class="btn b-default b-sm" data-act="pot-new" style="flex:none">${ic("plus")}Nuovo</button></div>`;
-  if (!pl.length) return h + `<div class="card empty">${ic("piggy")}<div>Nessun salvadanaio. Creane uno per un viaggio, la casa o una spesa grossa.</div><button class="btn b-default b-sm" data-act="pot-new" style="margin-top:6px">${ic("plus")}Nuovo salvadanaio</button></div>`;
+  const two = r => `<div class="pgrid"><div class="stack pcol">${nwCard()}</div><div class="stack pcol">${r}</div></div>`; // su PC patrimonio e salvadanai affiancati
+  let h = `<div class="between pots-h" style="align-items:flex-end;gap:12px"><div><h2 class="pt" style="font-size:20px">Salvadanai</h2><p class="muted sm">Quanto hai da parte. Una spesa pagata da un salvadanaio non pesa sul budget del mese.</p></div><button class="btn b-default b-sm" data-act="pot-new" style="flex:none">${ic("plus")}Nuovo</button></div>`;
+  if (!pl.length) return two(h + `<div class="card empty">${ic("piggy")}<div>Nessun salvadanaio. Creane uno per un viaggio, la casa o una spesa grossa.</div><button class="btn b-default b-sm" data-act="pot-new" style="margin-top:6px">${ic("plus")}Nuovo salvadanaio</button></div>`);
   h += `<div class="card hero"><div class="card-c stack" style="gap:14px"><div><div class="lbl">Totale da parte</div><div class="big mono">${eur(tot)}</div><div class="muted sm" style="margin-top:4px">${pl.length} ${pl.length === 1 ? "salvadanaio" : "salvadanai"}</div></div>
     ${tot > 0 ? `<div class="stack" style="gap:10px">${pl.filter(p => p.avail > 0).map(p => `<div class="stack" style="gap:5px"><div class="between sm"><span>${esc(p.c.name)}</span><span class="mono muted">${Math.round(p.avail / tot * 100)}%</span></div><div class="prog"><i style="width:${p.avail / tot * 100}%;background:var(--chart-3)"></i></div></div>`).join("")}</div>` : ""}</div></div>`;
   h += `<div class="card"><div class="card-c flush">` + pl.map(p => `<button class="crow" data-act="open-pot" data-id="${esc(p.c.id)}">
       <div class="between"><span class="nm">${esc(p.c.name)}</span><span class="vl mono"><b style="color:${p.avail < 0 ? "var(--destructive)" : "var(--foreground)"}">${eur0(p.avail)}</b></span></div>
       ${(g => g ? `${progHtml(p.avail, g.goal)}<div class="xs muted">${esc(goalLine(p.c, g))}</div>` : `<div class="xs muted">${esc([p.init ? "saldo iniziale " + eur0(p.init) : "", "messi da parte " + eur0(p.saved), p.used ? "usati " + eur0(p.used) : ""].filter(Boolean).join(" · "))}</div>`)(goalInfo(p.c, p))}</button>`).join(`<div class="sep"></div>`) + `</div></div>
     <div class="row"><button class="btn b-outline b-sm" data-act="goto-pot-settings">${ic("sliders")}Saldi iniziali e categorie</button></div>`;
-  return h;
+  return two(h);
 }
 function viewPot() {
   const c = catById(S.potView); if (!c) { S.potView = ""; return viewMovimenti(); }
