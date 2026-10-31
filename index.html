@@ -619,8 +619,9 @@ const baseBud = (c, budCats, m) => isAuto(c) ? subsTotal(m) : (Number(budCats?.[
 /* tutto quello che non è assegnato alle altre categorie va nella categoria "resto": ogni euro ha una destinazione */
 function restFor(budCats, m = S.month) {
   const others = (S.cfg?.categories || []).filter(c => !isRest(c) && (!c.hidden || Number(budCats?.[c.id]))).reduce((a, c) => a + baseBud(c, budCats, m), 0);
-  return incomeFor(m).monthly - others - accrualFor(m);
+  return incomeFor(m).monthly - others - accrualFor(m) - recoverOf(m); // il recupero di un mese negativo esce dal totale e resta sul conto
 }
+const recoverOf = m => Math.max(0, Number(S.cfg?.recover?.[m]) || 0);
 const budOf = (c, budCats, m = S.month) => isRest(c) ? Math.max(0, restFor(budCats, m)) : baseBud(c, budCats, m);
 const isFixedSrc = id => Number(srcById(id)?.fixed) > 0;
 /* importo fisso di una fonte in un mese: l'ultima variazione con data <= mese, altrimenti l'importo base */
@@ -880,6 +881,7 @@ function viewMese() {
       ${r.isCur ? `<span class="badge ${projLeft < 0 ? "bd-destructive" : "bd-success"}">${ic(projLeft < 0 ? "down" : "up")}<span class="mono">${sgn(projLeft)}</span> a fine mese</span>` : ""}</div>
     ${progHtml(r.spentTot, r.budTot, r.isCur ? r.projTot : 0, true)}
     <div class="between muted sm"><span>Speso <b class="mono" style="color:var(--foreground);font-weight:500">${eur0(r.spentTot)}</b> di <span class="mono">${eur0(r.budTot)}</span></span><span class="mono">${pct}%</span></div>
+    ${recoverOf(S.month) ? `<div class="xs muted">Il budget è ridotto di <span class="mono">${eur0(recoverOf(S.month))}</span> per recuperare un mese negativo: restano sul conto.</div>` : ""}
   </div></div>
   <div class="stats">
     <div class="card stat has-tip" tabindex="0" aria-describedby="incTip"><div class="l"><span class="gd g-inc"></span>Entrate <span class="tip-i" aria-hidden="true">?</span></div><div class="v mono">${eur0(r.income)}</div><div class="tip" role="tooltip" id="incTip">Entrate mensili = fissi <span class="mono">${eur0(r.inc.fixed)}</span> + fatture degli ultimi 12 mesi <span class="mono">${eur0(r.inc.pool)}</span> ÷ 12${r.inc.extra ? ` + extra del mese <span class="mono">${eur0(r.inc.extra)}</span>` : ""}${r.inc.invoiced ? ` · fatturato netto questo mese <span class="mono">${eur0(r.inc.invoiced)}</span>` : ""}. ${restCat() ? `Tutto quello che non è a budget va in ${esc(catById(restCat()).name)}, quindi il disponibile è entrate mensili − uscite.` : ""}</div></div>
@@ -1531,11 +1533,14 @@ function drawCatTrend() {
 /* ---------- budget ---------- */
 const restMin = () => Math.max(0, Number(S.cfg?.restMin) || 0);
 function marginHtml() {
-  const r = restFor(S.budgetDraft), rc = catById(restCat()), mn = restMin();
+  const r = restFor(S.budgetDraft), rc = catById(restCat()), mn = restMin(), rv = recoverOf(S.month);
+  const recL = rv ? `<div class="between sm" style="margin-bottom:6px"><span class="muted">Recupero mese negativo · resta sul conto</span><span class="mono">−${eur0(rv)}</span></div>` : "";
+  return recL + (() => {
   if (!rc) return `<p class="xs muted">Scegli sotto la categoria che riceve il resto.</p>`;
   if (r >= -0.5 && r < mn - 0.5) return `<div class="between sm"><span class="muted">Resto assegnato a ${esc(rc.name)}</span><span class="badge bd-destructive mono">${eur0(r)}</span></div><p class="xs" style="margin-top:6px;color:var(--destructive)">Sotto il minimo di ${eur0(mn)}: riduci altre voci di <span class="mono">${eur0(mn - r)}</span>.</p>`;
   if (r < -0.5) return `<div class="between sm"><span class="muted">Budget oltre le entrate</span><span class="badge bd-destructive mono">${sgn(r)}</span></div><p class="xs" style="margin-top:6px;color:var(--destructive)">Riduci qualche voce di <span class="mono">${eur0(-r)}</span>: ${esc(rc.name)} è a zero.</p>`;
   return `<div class="between sm"><span class="muted">Resto assegnato a ${esc(rc.name)}</span><span class="badge bd-success mono">${eur0(r)}</span></div>`;
+  })();
 }
 const budCatsFor = (budCats) => (S.cfg?.categories || []).filter(c => !c.hidden || Number(budCats?.[c.id]));
 function budgetTotal() { return budCatsFor(S.budgetDraft).reduce((a, c) => a + budOf(c, S.budgetDraft), 0) + accrualFor(S.month); }
@@ -1554,7 +1559,7 @@ function viewBudget() {
   let h = `<div class="between" style="align-items:flex-end"><div><h1 class="pt">Budget di ${esc(mLong(S.month))}</h1>
     <p class="muted sm">${bud.draft ? (bud.from ? `Bozza copiata da ${esc(mLong(bud.from))}` : "Bozza con i valori predefiniti") + ", modifica e salva" : "Salvato · le modifiche valgono solo per questo mese"}</p></div>
     <span class="badge ${bud.draft ? "bd-warning" : "bd-success"}">${bud.draft ? "Bozza" : "Salvato"}</span></div>
-    ${Number(S.cfg.recover?.[S.month]) > 0 ? `<div class="alert" id="recNote"><div class="row" style="align-items:flex-start">${ic("info")}<div><div class="t">Piano di recupero: ${eur0(S.cfg.recover[S.month])} in meno</div><div class="muted sm">Le voci variabili di ${esc(mLong(S.month))} sono ridotte per recuperare un mese chiuso sotto la soglia${recPending(S.month).length ? ` · poi ${recPending(S.month).map(([k, v]) => `${esc(mShort(k))} −${eur0(v)}`).join(", ")}` : ""}. Puoi saldarlo alla chiusura del mese.</div></div></div></div>` : ""}
+    ${Number(S.cfg.recover?.[S.month]) > 0 ? `<div class="alert" id="recNote"><div class="row" style="align-items:flex-start">${ic("info")}<div><div class="t">Piano di recupero: ${eur0(S.cfg.recover[S.month])} in meno</div><div class="muted sm">Le voci variabili di ${esc(mLong(S.month))} sono ridotte e il totale del mese scende della stessa cifra: quei soldi restano sul conto per coprire il negativo${recPending(S.month).length ? ` · poi ${recPending(S.month).map(([k, v]) => `${esc(mShort(k))} −${eur0(v)}`).join(", ")}` : ""}. Puoi saldarlo alla chiusura del mese.</div></div></div></div>` : ""}
     <div class="card"><div class="card-c stack" style="gap:12px"><div class="between"><div><div class="muted sm" style="font-weight:500">Totale budget</div><div class="mono" id="btot" style="font-size:30px;font-weight:600;letter-spacing:-.03em">${eur0(budgetTotal())}</div></div>${acc ? `<div class="muted xs" style="text-align:right">di cui fondo annuale<br><span class="mono" style="font-size:13px;color:var(--foreground)">${eur(acc)}</span></div>` : ""}</div>
     <div class="sep" style="margin:0"></div>
     <div class="between sm"><span class="muted has-tip" tabindex="0" aria-describedby="budTip">Entrate mensili di ${esc(mLong(S.month))} <span class="tip-i" aria-hidden="true">?</span><span class="tip" role="tooltip" id="budTip">Ogni euro delle entrate mensili è assegnato: quello che non metti nelle altre voci finisce qui, anche quando arriva una nuova fattura. Borsa <span class="mono">${eur0(incomeFor(S.month).fixed)}</span> + fatture degli ultimi 12 mesi <span class="mono">${eur0(incomeFor(S.month).pool)}</span> ÷ 12. Ogni nuova fattura alza le entrate mensili di 1/12 del suo netto, per 12 mesi.</span></span><span class="mono" style="font-weight:500">${eur0(incomeFor(S.month).monthly)}</span></div>
