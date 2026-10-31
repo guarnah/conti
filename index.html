@@ -644,12 +644,18 @@ function grossIn(m) {
   return S.incTx.filter(t => t.month === m && !isFixedSrc(t.src) && !isExtraSrc(t.src)).reduce((a, t) => a + (Number(t.gross) || 0), 0);
 }
 /* entrate mensili = importi fissi (borsa) + netto fatturato negli ultimi 12 mesi / 12 */
-const invPct = () => { const v = Number(S.cfg?.invoicePct); return v > 0 && v <= 100 ? v : 100; };
+/* prudenza sulle fatture: vale dal mese in cui la imposti (il primo non ancora chiuso), i mesi chiusi restano com'erano */
+function invPctAt(m) {
+  const ch = S.cfg?.invoicePctChanges || (S.cfg?.invoicePct ? {"0000-00":S.cfg.invoicePct} : {});
+  const k = Object.keys(ch).filter(x => x <= m).sort().pop(), v = k ? Number(ch[k]) : 100;
+  return v > 0 && v <= 100 ? v : 100;
+}
+function firstOpenMonth() { let m = addMonth(curMonth(), -1); if (S.cfg?.startMonth && m < S.cfg.startMonth) m = S.cfg.startMonth; while (isClosed(m)) m = addMonth(m, 1); return m; }
 function incomeFor(m) {
   let pool = 0; for (let k = addMonth(m, -11); k <= m; k = addMonth(k, 1)) pool += invoicedIn(k);
   const fixed = fixedMonthly(m);
   const extra = S.incTx.filter(t => t.month === m && isExtraSrc(t.src)).reduce((a, t) => a + (Number(t.amount) || 0), 0);
-  const pct = invPct(), counted = pool * pct / 100; // prudenza: si conta solo una parte della media delle fatture
+  const pct = invPctAt(m), counted = pool * pct / 100; // prudenza: si conta solo una parte della media delle fatture
   return {fixed, pool, counted, pct, extra, monthly:fixed + counted / 12 + extra, invoiced:invoicedIn(m)};
 }
 
@@ -721,7 +727,9 @@ async function boot() {
   S.db = db;
   window.__cloud?.onStatus(s => setStatus(s === "ok" ? "Sincronizzato" : s === "busy" ? "Salvataggio" : "Offline", s === "ok" ? "ok" : s === "busy" ? "busy" : "err"));
   db.doc("config/main").onSnapshot(snap => {
-    S.cfg = snap.exists ? structuredClone(snap.data()) : null; S.cfgLoaded = true; S.trendCache = null; render();
+    S.cfg = snap.exists ? structuredClone(snap.data()) : null; S.cfgLoaded = true; S.trendCache = null;
+    if (S.cfg && S.cfg.invoicePct != null && !S.cfg.invoicePctChanges) { const cfg = structuredClone(S.cfg); cfg.invoicePctChanges = {[firstOpenMonth()]:Number(cfg.invoicePct)}; delete cfg.invoicePct; S.cfg = cfg; S.db.doc("config/main").set(cfg).catch(fail); }
+    render();
   }, e => fail(e));
   db.collection("tx").where("kind", "==", "inc").onSnapshot(snap => { S.incTx = snap.docs.map(d => ({id:d.id, ...d.data()})); S.trendCache = null; render(); }, e => fail(e));
   db.collection("tx").where("cat", "==", "fondo").onSnapshot(snap => { S.fundTx = snap.docs.map(d => ({id:d.id, ...d.data()})); render(); }, e => fail(e));
@@ -864,7 +872,7 @@ function viewMese() {
   if (S.month === curMonth() && new Date().getDate() <= 7 && S.cfg.startMonth && addMonth(S.month, -1) >= S.cfg.startMonth) h += `<div class="alert"><div class="row" style="align-items:flex-start">${ic("chart")}<div><div class="t">Com'è andato ${esc(mLong(addMonth(S.month, -1)))}?</div><div class="muted sm">Il riepilogo del mese appena chiuso</div></div></div><button class="btn b-outline b-sm" data-act="go-prev">Vedi riepilogo</button></div>`;
   { const mc = monthToClose(); const show = (S.month === curMonth() && mc) ? mc : (S.month < curMonth() && S.cfg.startMonth && S.month >= S.cfg.startMonth && !isClosed(S.month) ? S.month : null);
     if (show) h += `<div class="alert"><div class="row" style="align-items:flex-start">${ic("check")}<div><div class="t">Chiudi ${esc(mLong(show))}</div><div class="muted sm">Calcola l'avanzo e registra i versamenti di ${esc(mLong(addMonth(show, 1)))} in un passaggio</div></div></div><button class="btn b-default b-sm" data-act="cl-open" data-m="${esc(show)}">Chiudi il mese</button></div>`;
-    else if (isClosed(S.month)) { const cl = S.cfg.closed[S.month]; h += `<div class="xs muted row" style="gap:6px">${ic("check")}Mese chiuso il ${esc(fmtDate(cl.date))}${cl.avanzo ? ` · avanzo ${eur(cl.avanzo)}` : ""}</div>`; } }
+    else if (isClosed(S.month)) { const cl = S.cfg.closed[S.month]; h += S.reopenAsk === S.month ? reopenHtml(S.month) : `<div class="xs muted row" style="gap:6px;flex-wrap:wrap">${ic("check")}Mese chiuso il ${esc(fmtDate(cl.date))}${cl.avanzo ? ` · avanzo ${eur(cl.avanzo)}` : ""}${canReopen(S.month) ? ` · <button class="btn b-ghost b-sm" style="height:auto;padding:2px 6px" data-act="cl-reopen" data-m="${esc(S.month)}">Riapri</button>` : ""}</div>`; } }
   { // mese già chiuso in negativo senza aver scelto come recuperarlo: qui o nel mese dopo
     const pm = addMonth(S.month, -1), negOf = (m, rr) => isClosed(m) && !S.cfg.closed[m].negDone && rr.spentTot - rr.income > 0.5 ? rr.spentTot - rr.income : 0;
     let nm = null, nv = negOf(S.month, r); if (nv) nm = S.month;
@@ -1048,6 +1056,35 @@ function openClose(m, only = false) {
   drawClose(); enableSwipeClose(bg, closeClose);
 }
 function closeClose() { closeOverlay("clBg"); closeState = null; }
+/* riaprire l'ultimo mese chiuso: si tolgono i movimenti registrati dalla chiusura e si rimettono piano di recupero e budget del mese dopo */
+const localDay = ts => { const d = new Date(ts); return new Date(d - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 10); };
+const canReopen = m => isClosed(m) && !Object.keys(S.cfg.closed || {}).some(k => k > m);
+function reopenPlan(m) {
+  const cl = S.cfg.closed?.[m]; if (!cl) return null; const next = addMonth(m, 1);
+  const txs = cl.undo ? cl.undo.tx.map(id => S.expTx.find(t => t.id === id)).filter(Boolean) // chiusure vecchie: avanzo del mese e versamenti del 1° del mese dopo registrati quel giorno
+    : S.expTx.filter(t => (t.month === m && isAvanzoTx(t)) || (t.month === next && t.date === next + "-01" && catById(t.cat)?.group === "ris" && t.created && localDay(t.created) === cl.date));
+  return {m, next, cl, txs};
+}
+function reopenHtml(m) {
+  const pl = reopenPlan(m); if (!pl) return "";
+  return `<div class="alert" style="border-color:var(--destructive);display:block"><div class="t">Riaprire ${esc(mLong(m))}?</div>
+    <div class="muted sm" style="margin:4px 0 8px">${pl.txs.length ? `Si tolgono i movimenti registrati dalla chiusura:` : "Non ci sono movimenti registrati dalla chiusura da togliere."}</div>
+    ${pl.txs.length ? `<div class="stack" style="gap:3px;margin-bottom:8px">${pl.txs.map(t => `<div class="between xs"><span>${esc(t.note || catById(t.cat)?.name || "")} · ${esc(fmtDateS(t.date))}</span><span class="mono">${eur(t.amount)}</span></div>`).join("")}</div>` : ""}
+    <div class="xs muted" style="margin-bottom:10px">Il budget di ${esc(mLong(pl.next))} e il piano di recupero tornano com'erano prima della chiusura. I bonifici già fatti in banca non cambiano: quando richiudi il mese li registri di nuovo.</div>
+    <div class="row" style="gap:8px;justify-content:flex-end"><button class="btn b-outline b-sm" data-act="cl-reopen-no">Annulla</button><button class="btn b-default b-sm" data-act="cl-reopen-ok" data-m="${esc(m)}">Riapri il mese</button></div></div>`;
+}
+async function doReopen(m) {
+  const pl = reopenPlan(m); if (!pl || !canReopen(m)) return;
+  try {
+    for (const t of pl.txs) await S.db.doc("tx/" + t.id).delete();
+    const cfg = structuredClone(S.cfg), cl = pl.cl, bref = S.db.doc("budgets/" + pl.next);
+    if (cl.undo) { if (cl.undo.nextBudget) await bref.set(cl.undo.nextBudget); else { const b = await bref.get(); if (b.exists) await bref.delete(); }
+      if (cl.undo.recover) cfg.recover = cl.undo.recover; else delete cfg.recover; }
+    else { const b = await bref.get(); if (b.exists && b.data().saved && localDay(b.data().saved) >= cl.date) await bref.delete(); // budget salvato dalla chiusura: torna in bozza
+      if (cl.negDone && cfg.recover) { cfg.recover = Object.fromEntries(Object.entries(cfg.recover).filter(([k]) => k <= m)); if (!Object.keys(cfg.recover).length) delete cfg.recover; } }
+    delete cfg.closed[m]; await S.db.doc("config/main").set(cfg); S.cfg = cfg; S.reopenAsk = null; render(); toast(`${mLong(m)} riaperto: puoi chiuderlo di nuovo`);
+  } catch (e) { fail(e); }
+}
 /* budget del mese che si chiude e di quello dopo, per proporre come impostare il prossimo */
 async function loadCloseBudgets(x) {
   const next = addMonth(x.m, 1), defs = () => Object.fromEntries(cats().map(c => [c.id, Number(c.defaultBudget) || 0]));
@@ -1059,7 +1096,7 @@ async function loadCloseBudgets(x) {
     const base = nextSaved ? {...(bn.data().full || nextSaved)} : (() => { const o = {...curFull}; cats().forEach(c => { if (!(c.id in o) && Number(c.defaultBudget)) o[c.id] = Number(c.defaultBudget); }); return recBudget(o, next); })();
     if (restCat()) delete base[restCat()];
     const r = computeMonth(S.expTx.filter(t => t.month === x.m), cur, x.m);
-    x.bud = {cur, nextSaved, base, r};
+    x.bud = {cur, nextSaved, nextDoc:bn.exists ? bn.data() : null, base, r};
   } catch (e) { console.warn(e); x.bud = {error:true}; }
   if (closeState === x) { readClose(); drawClose(); }
 }
@@ -1196,12 +1233,14 @@ async function saveClose() {
     let k = 0;
     const opt = x.bud && !x.bud.error ? closeOptions().find(o => o.k === x.budChoice) : null, items = closeFinalItems();
     const neg = x.bud && !x.bud.error && closeGap().gap > 0.5;
-    if (!x.only) for (const it of items.filter(i => i.on && i.amount > 0)) await S.db.collection("tx").doc().set({kind:"exp", cat:it.cat, amount:r2(it.amount), date:next + "-01", month:next, note:it.name, tag:"", ...(it.recId ? {recId:it.recId} : {}), created:now + k++});
-    if (!x.only && c.avanzo > 0 && restCat()) await S.db.collection("tx").doc().set({kind:"exp", cat:restCat(), amount:r2(c.avanzo), date:lastDay(x.m), month:x.m, note:"Avanzo di " + mLong(x.m), tag:"", avanzo:true, created:now + k++});
+    const made = [], add = async d => { const ref = S.db.collection("tx").doc(); await ref.set(d); made.push(ref.id); };
+    const undo = {tx:made, recover:S.cfg.recover ? structuredClone(S.cfg.recover) : null, nextBudget:x.bud && !x.bud.error ? (x.bud.nextDoc || null) : null};
+    if (!x.only) for (const it of items.filter(i => i.on && i.amount > 0)) await add({kind:"exp", cat:it.cat, amount:r2(it.amount), date:next + "-01", month:next, note:it.name, tag:"", ...(it.recId ? {recId:it.recId} : {}), created:now + k++});
+    if (!x.only && c.avanzo > 0 && restCat()) await add({kind:"exp", cat:restCat(), amount:r2(c.avanzo), date:lastDay(x.m), month:x.m, note:"Avanzo di " + mLong(x.m), tag:"", avanzo:true, created:now + k++});
     const rec = x.bud && !x.bud.error ? closeRecover() : null;
     if (opt?.cats) { const clean = o => { const r = {}; for (const [kk, v] of Object.entries(o || {})) if (catById(kk) && kk !== restCat()) r[kk] = r2(Number(v) || 0); return r; }, out = clean(opt.cats), full = clean(opt.full);
       await S.db.doc("budgets/" + next).set({month:next, cats:out, ...(JSON.stringify(full) !== JSON.stringify(out) ? {full} : {}), saved:Date.now()}); }
-    const cfg = structuredClone(S.cfg); cfg.closed = {...(cfg.closed || {}), [x.m]:x.only ? {...(cfg.closed?.[x.m] || {}), budget:opt?.k, negDone:true} : {date:todayISO(), avanzo:r2(c.avanzo), saldo:c.ok ? r2(c.saldo) : null, ...(opt ? {budget:opt.k} : {}), ...(neg ? {negDone:true} : {})}};
+    const cfg = structuredClone(S.cfg); cfg.closed = {...(cfg.closed || {}), [x.m]:x.only ? {...(cfg.closed?.[x.m] || {}), budget:opt?.k, negDone:true} : {date:todayISO(), avanzo:r2(c.avanzo), saldo:c.ok ? r2(c.saldo) : null, ...(opt ? {budget:opt.k} : {}), ...(neg ? {negDone:true} : {}), undo}};
     if (rec) { const nr = {...rec}; if (opt?.spread) [0, 1, 2].forEach(i => { const mm = addMonth(next, i); nr[mm] = r2((Number(nr[mm]) || 0) + opt.spread); });
       if (opt?.planNext) nr[next] = r2((Number(nr[next]) || 0) + opt.planNext);
       const kept = Object.fromEntries(Object.entries(cfg.recover || {}).filter(([mm]) => mm === x.m)); // il recupero del mese chiuso resta come storico
@@ -1652,8 +1691,8 @@ function viewEntrate() {
 </div></div>
   <div class="card"><div class="card-h"><div><div class="card-t">Registrate a ${esc(mLong(S.month))}</div><div class="card-d">${list.length ? `${list.length} ${list.length === 1 ? "entrata" : "entrate"} · netto <span class="mono">${eur(tot)}</span>` : "Nessuna entrata registrata"}</div></div></div>
     ${list.length ? `<div class="card-c flush">${list.map(txRow).join("")}</div>` : ""}</div>
-  <div class="card"><div class="card-c between" style="gap:10px;flex-wrap:wrap"><div><div class="card-t" style="font-size:14px">Prudenza sulle fatture</div><div class="card-d">Quanta parte della media delle fatture usare per il budget. Sotto il 100% il budget resta più basso e quello che entra in più diventa avanzo.${inc.pct < 100 ? ` Oggi conti <span class="mono">${eur0(inc.counted / 12)}</span> invece di <span class="mono">${eur0(inc.pool / 12)}</span> al mese.` : ""}</div></div>
-    <select id="invPct" class="inp" style="width:auto" aria-label="Quota delle fatture da contare">${[100, 95, 90, 85, 80, 75, 70].map(v => `<option value="${v}" ${inc.pct === v ? "selected" : ""}>${v}%${v === 100 ? " (tutta la media)" : ""}</option>`).join("")}</select></div></div>
+  <div class="card"><div class="card-c between" style="gap:10px;flex-wrap:wrap"><div><div class="card-t" style="font-size:14px">Prudenza sulle fatture</div><div class="card-d">Quanta parte della media delle fatture usare per il budget. Sotto il 100% il budget resta più basso e quello che entra in più diventa avanzo.${inc.pct < 100 ? ` A ${esc(mLong(S.month))} conti <span class="mono">${eur0(inc.counted / 12)}</span> invece di <span class="mono">${eur0(inc.pool / 12)}</span> al mese.` : ""} Una modifica vale da ${esc(mLong(firstOpenMonth()))}: i mesi già chiusi restano com'erano.${Object.keys(S.cfg.invoicePctChanges || {}).length ? `<br><span class="xs">${Object.entries(S.cfg.invoicePctChanges).sort().map(([k, v]) => `${v}% da ${esc(mShort(k))}`).join(" · ")}</span>` : ""}</div></div>
+    <select id="invPct" class="inp" style="width:auto" aria-label="Quota delle fatture da contare">${[100, 95, 90, 85, 80, 75, 70].map(v => `<option value="${v}" ${invPctAt(firstOpenMonth()) === v ? "selected" : ""}>${v}%${v === 100 ? " (tutta la media)" : ""}</option>`).join("")}</select></div></div>
   ${taxCard()}
   ${sourcesCard(c)}
   ${histCard(c)}
@@ -2236,6 +2275,9 @@ document.addEventListener("click", async e => {
   if (act === "go-prev") { $("#prevM").click(); return; }
   if (act === "cl-open") return openClose(a.dataset.m);
   if (act === "cl-neg") return openClose(a.dataset.m, true);
+  if (act === "cl-reopen") { S.reopenAsk = a.dataset.m; render(); return; }
+  if (act === "cl-reopen-no") { S.reopenAsk = null; render(); return; }
+  if (act === "cl-reopen-ok") { a.disabled = true; return doReopen(a.dataset.m); }
   if (act === "cl-close") return closeClose();
   if (act === "cl-save") return saveClose();
   if (act === "nw-edit") return openNw();
@@ -2319,7 +2361,9 @@ document.addEventListener("change", e => {
   if (e.target.id === "abAuto" && subState?.item && $("#abHint")) { readSubInputs(); $("#abHint").innerHTML = subHint(subState.item); }
   if (e.target.id === "fcat") { S.catFilter = e.target.value; render(); }
   if (e.target.id === "nwRem") { saveNwRemind(e.target.value); return; }
-  if (e.target.id === "invPct") { const cfg = structuredClone(S.cfg); cfg.invoicePct = Number(e.target.value); S.db.doc("config/main").set(cfg).then(() => { S.cfg = cfg; render(); toast(`Fatture contate al ${cfg.invoicePct}%`); }).catch(fail); return; }
+  if (e.target.id === "invPct") { const cfg = structuredClone(S.cfg), fo = firstOpenMonth(), v = Number(e.target.value);
+    const ch = Object.fromEntries(Object.entries(cfg.invoicePctChanges || {}).filter(([k]) => k < fo)); ch[fo] = v; cfg.invoicePctChanges = ch; delete cfg.invoicePct;
+    S.db.doc("config/main").set(cfg).then(() => { S.cfg = cfg; render(); toast(`Fatture contate al ${v}% da ${mLong(fo)}`); }).catch(fail); return; }
   if (e.target.id === "sAnn" && sheetState) { readSheetInputs(); sheetState.covers = undefined; drawSheet(); }
   if (e.target.id === "ftag") { if (e.target.value) openTag(e.target.value); }
   if ((e.target.id === "backupFile" || e.target.id === "backupFile0") && e.target.files?.[0]) { const f = e.target.files[0]; f.text().then(async txt => { try { const n = await window.__cloud.importBackup(JSON.parse(txt)); S.trendCache = null; toast(`Importati ${n} elementi`); } catch (er) { console.error(er); toast("File di backup non valido"); } e.target.value = ""; }); }
