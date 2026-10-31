@@ -494,6 +494,7 @@ const EUR0 = new Intl.NumberFormat("it-IT", {style:"currency", currency:"EUR", m
 const eur = n => EUR.format(Math.round((n || 0) * 100) / 100);
 const eur0 = n => EUR0.format(Math.round(n || 0));
 const sgn = n => (n >= 0 ? "+" : "−") + eur0(Math.abs(n));
+const sgnc = n => (n >= 0 ? "+" : "−") + eur(Math.abs(n)); // con i centesimi, per interessi e rettifiche
 const r2 = n => Math.round((n || 0) * 100) / 100;
 const parseAmt = s => { if (typeof s === "number") return s; s = String(s || "").trim().replace(/\s/g, "").replace(/€/g, ""); if (s.includes(",")) s = s.replace(/\./g, "").replace(",", "."); const n = parseFloat(s); return isFinite(n) ? n : NaN; };
 const pad = n => String(n).padStart(2, "0");
@@ -608,7 +609,8 @@ function potStatus(id) {
   const init = Number(catById(id)?.potInitial) || 0;
   const saved = S.expTx.filter(t => t.cat === id && !t.from).reduce((a, t) => a + (Number(t.amount) || 0), 0);
   const used = S.expTx.filter(t => t.from === id).reduce((a, t) => a + (Number(t.amount) || 0), 0);
-  return {init, saved, used, avail:init + saved - used};
+  const adj = Object.values(catById(id)?.potAdj || {}).reduce((a, v) => a + (Number(v) || 0), 0); // rettifiche col saldo reale (interessi, commissioni)
+  return {init, saved, used, adj, avail:init + saved - used + adj};
 }
 /* obiettivo di un salvadanaio: quanto manca e quanto serve al mese per arrivarci entro la data */
 function goalInfo(c, p) {
@@ -1255,6 +1257,39 @@ async function saveClose() {
     closeClose(); render(); toast(x.only ? (opt?.cats ? `Budget di ${mLong(next)} aggiornato` : "Fatto") : `${mLong(x.m)} chiuso · ${k} versamenti registrati${opt?.cats ? " · budget di " + mLong(next) + " impostato" : ""}`);
   } catch (e) { fail(e); const b = $("#clSave"); if (b) b.disabled = false; }
 }
+/* ---------- salvadanai: saldo reale (interessi maturati, commissioni) ---------- */
+let pbState = null;
+function openPotBal(id) {
+  const list = (id ? [catById(id)] : pots()).filter(Boolean);
+  pbState = {date:todayISO(), rows:list.map(c => ({id:c.id, name:c.name, calc:r2(potStatus(c.id).avail), v:""}))};
+  const bg = document.createElement("div"); bg.className = "ovl"; bg.id = "pbBg";
+  bg.innerHTML = `<div class="drawer" role="dialog" aria-modal="true" aria-labelledby="pbTitle" id="pbd"></div>`;
+  document.body.appendChild(bg); document.body.style.overflow = "hidden";
+  bg.addEventListener("click", e => { if (e.target === bg) closePotBal(); });
+  drawPotBal(); enableSwipeClose(bg, closePotBal);
+}
+function closePotBal() { closeOverlay("pbBg"); pbState = null; }
+function readPotBal() { if (!pbState) return; const d = $("#pbDate"); if (d) pbState.date = d.value || pbState.date; document.querySelectorAll("#pbd [data-pb]").forEach(i => { const x = pbState.rows[Number(i.dataset.pb)]; if (x) x.v = i.value; }); }
+function drawPotBal() {
+  const el = $("#pbd"), x = pbState; if (!el || !x) return;
+  el.innerHTML = `<div class="handle-zone"><div class="handle"></div></div>
+    <div class="between"><div><h2 id="pbTitle" style="font-size:17px;font-weight:600">Saldo reale ${x.rows.length === 1 ? "del salvadanaio" : "dei salvadanai"}</h2><p class="muted sm">Scrivi quanto c'è davvero: la differenza (interessi, commissioni) viene registrata come rettifica e non pesa sul budget</p></div><button class="btn b-ghost b-icon b-sm" data-act="pb-close" aria-label="Chiudi">${ic("x")}</button></div>
+    <div class="field"><label for="pbDate">Data</label><input id="pbDate" class="inp" type="date" value="${esc(x.date)}"></div>
+    <div class="stack" style="gap:10px">${x.rows.map((r, i) => { const v = parseAmt(r.v), d = isFinite(v) && r.v !== "" ? r2(v - r.calc) : null;
+      return `<div class="card card-c stack" style="gap:6px;padding:12px"><div class="between"><b class="sm">${esc(r.name)}</b><span class="xs muted">nell'app <span class="mono">${eur(r.calc)}</span></span></div>
+        <div class="between" style="gap:10px"><input class="inp mono" data-pb="${i}" inputmode="decimal" placeholder="Saldo reale €" value="${esc(r.v)}" aria-label="Saldo reale di ${esc(r.name)}" style="max-width:180px"><span class="xs mono" id="pbd${i}" style="color:${d == null || Math.abs(d) < 0.01 ? "var(--muted-foreground)" : d > 0 ? "var(--success)" : "var(--destructive)"}">${d == null ? "" : Math.abs(d) < 0.01 ? "nessuna differenza" : sgnc(d)}</span></div></div>`; }).join("")}</div>
+    <p class="xs muted">Lascia vuoto un salvadanaio per non cambiarlo.</p>
+    <div class="dfoot"><span class="grow"></span><button class="btn b-outline" data-act="pb-close">Annulla</button><button class="btn b-default" data-act="pb-save" id="pbSave">Salva</button></div>`;
+}
+async function savePotBal() {
+  readPotBal(); const x = pbState; if (!/^\d{4}-\d{2}-\d{2}$/.test(x.date || "")) return toast("Scegli la data");
+  const cfg = structuredClone(S.cfg); let n = 0;
+  for (const r of x.rows) { const v = parseAmt(r.v); if (r.v === "" || !isFinite(v)) continue; const d = r2(v - r.calc); if (Math.abs(d) < 0.01) continue;
+    const c = cfg.categories.find(y => y.id === r.id); if (!c) continue; c.potAdj = {...(c.potAdj || {})}; c.potAdj[x.date] = r2((Number(c.potAdj[x.date]) || 0) + d); n++; }
+  if (!n) { closePotBal(); return toast("Nessuna differenza da registrare"); }
+  $("#pbSave").disabled = true;
+  try { await S.db.doc("config/main").set(cfg); S.cfg = cfg; closePotBal(); render(); toast(n === 1 ? "Saldo aggiornato" : `${n} salvadanai aggiornati`); } catch (e) { fail(e); const b = $("#pbSave"); if (b) b.disabled = false; }
+}
 /* ---------- patrimonio: saldi dei conti a fine mese ---------- */
 const nwShare = (snap, id) => { const v = snap?.shares?.[id] ?? (S.cfg?.accounts || []).find(a => a.id === id)?.share ?? 100; return Math.min(100, Math.max(0, Number(v) || 0)); };
 const nwMine = (snap, id) => (Number(snap?.balances?.[id]) || 0) * nwShare(snap, id) / 100;
@@ -1364,7 +1399,7 @@ function viewSalvadanai() {
   const pl = pots().map(c => ({c, ...potStatus(c.id)}));
   const tot = pl.reduce((a, p) => a + p.avail, 0);
   const two = r => `<div class="pgrid"><div class="stack pcol">${nwCard()}</div><div class="stack pcol">${r}</div></div>`; // su PC patrimonio e salvadanai affiancati
-  let h = `<div class="between pots-h" style="align-items:flex-end;gap:12px"><div><h2 class="pt" style="font-size:20px">Salvadanai</h2><p class="muted sm">Quanto hai da parte. Una spesa pagata da un salvadanaio non pesa sul budget del mese.</p></div><button class="btn b-default b-sm" data-act="pot-new" style="flex:none">${ic("plus")}Nuovo</button></div>`;
+  let h = `<div class="between pots-h" style="align-items:flex-end;gap:12px"><div><h2 class="pt" style="font-size:20px">Salvadanai</h2><p class="muted sm">Quanto hai da parte. Una spesa pagata da un salvadanaio non pesa sul budget del mese.</p></div><div class="row" style="gap:6px;flex:none">${pl.length ? `<button class="btn b-outline b-sm" data-act="pot-bal" title="Scrivi il saldo reale: interessi e commissioni vengono registrati come rettifica">${ic("check")}Aggiorna saldi</button>` : ""}<button class="btn b-default b-sm" data-act="pot-new">${ic("plus")}Nuovo</button></div></div>`;
   if (!pl.length) return two(h + `<div class="card empty">${ic("piggy")}<div>Nessun salvadanaio. Creane uno per un viaggio, la casa o una spesa grossa.</div><button class="btn b-default b-sm" data-act="pot-new" style="margin-top:6px">${ic("plus")}Nuovo salvadanaio</button></div>`);
   h += `<div class="card hero"><div class="card-c stack" style="gap:14px"><div><div class="lbl">Totale da parte</div><div class="big mono">${eur(tot)}</div><div class="muted sm" style="margin-top:4px">${pl.length} ${pl.length === 1 ? "salvadanaio" : "salvadanai"}</div></div>
     ${tot > 0 ? `<div class="stack" style="gap:10px">${pl.filter(p => p.avail > 0).map(p => `<div class="stack" style="gap:5px"><div class="between sm"><span>${esc(p.c.name)}</span><span class="mono muted">${Math.round(p.avail / tot * 100)}%</span></div><div class="prog"><i style="width:${p.avail / tot * 100}%;background:var(--chart-3)"></i></div></div>`).join("")}</div>` : ""}</div></div>`;
@@ -1377,12 +1412,13 @@ function viewSalvadanai() {
 function viewPot() {
   const c = catById(S.potView); if (!c) { S.potView = ""; return viewMovimenti(); }
   const p = potStatus(c.id);
-  const list = S.expTx.filter(t => t.cat === c.id || t.from === c.id).sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.created || 0) - (a.created || 0));
+  const adjL = Object.entries(c.potAdj || {}).map(([d, v]) => ({adj:true, id:"adj_" + d, date:d, amount:Number(v) || 0, created:0}));
+  const list = [...S.expTx.filter(t => t.cat === c.id || t.from === c.id), ...adjL].sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.created || 0) - (a.created || 0));
   const g = goalInfo(c, p);
-  let h = `<div class="between"><button class="btn b-ghost b-sm" data-act="close-pot"><svg class="i" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>Salvadanai</button><button class="btn b-outline b-sm" data-act="pot-edit" data-id="${esc(c.id)}">Modifica</button></div>
+  let h = `<div class="between"><button class="btn b-ghost b-sm" data-act="close-pot"><svg class="i" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>Salvadanai</button><div class="row" style="gap:6px"><button class="btn b-outline b-sm" data-act="pot-bal" data-id="${esc(c.id)}">${ic("check")}Aggiorna saldo</button><button class="btn b-outline b-sm" data-act="pot-edit" data-id="${esc(c.id)}">Modifica</button></div></div>
   <div class="card hero"><div class="card-c stack" style="gap:14px">
     <div><div class="lbl">${esc(c.name)}</div><div class="big mono" style="color:${p.avail < 0 ? "var(--destructive)" : "var(--foreground)"}">${eur(p.avail)}</div><div class="muted sm" style="margin-top:4px">disponibile</div></div>
-    <div class="stats"><div class="stat" style="padding:0"><div class="l">Saldo iniziale</div><div class="v mono">${eur0(p.init)}</div></div><div class="stat" style="padding:0"><div class="l">Messi da parte</div><div class="v mono">${eur0(p.saved)}</div></div><div class="stat" style="padding:0"><div class="l">Usati</div><div class="v mono">${eur0(p.used)}</div></div></div>
+    <div class="stats"><div class="stat" style="padding:0"><div class="l">Saldo iniziale</div><div class="v mono">${eur0(p.init)}</div></div><div class="stat" style="padding:0"><div class="l">Messi da parte</div><div class="v mono">${eur0(p.saved)}</div></div>${Math.abs(p.adj) >= 0.01 ? `<div class="stat" style="padding:0"><div class="l">Interessi e rettifiche</div><div class="v mono">${sgnc(p.adj)}</div></div>` : ""}<div class="stat" style="padding:0"><div class="l">Usati</div><div class="v mono">${eur0(p.used)}</div></div></div>
     ${g ? `<div class="stack" style="gap:6px">${progHtml(p.avail, g.goal)}<div class="between sm"><span class="muted">${esc(goalLine(c, g))}</span><span class="mono">${Math.round(g.pct * 100)}%</span></div></div>` : ""}
     <p class="xs muted">${Number(c.defaultBudget) ? `Versamento previsto ${eur0(c.defaultBudget)} al mese, dal budget. ` : ""}Per usarlo, quando inserisci una spesa scegli "Pagata con: ${esc(c.name)}".</p>
   </div></div>`;
@@ -1391,7 +1427,7 @@ function viewPot() {
   let lastM = "";
   h += `<div class="card"><div class="card-c flush" style="padding-top:0">` + days.map(d => {
     const m = d.date.slice(0, 7); const mh = m !== lastM ? `<div class="dayh" style="color:var(--foreground);font-size:13px;padding-top:18px;text-transform:capitalize">${esc(mLabel(m))}</div>` : ""; lastM = m;
-    return mh + `<div class="dayh"><span>${esc(dayLabel(d.date))}</span></div>` + d.items.map(t => t.from === c.id ? txRow(t) : txRow(t).replace(`class="am mono "`, `class="am mono inc"`).replace(">−", ">+")).join("");
+    return mh + `<div class="dayh"><span>${esc(dayLabel(d.date))}</span></div>` + d.items.map(t => t.adj ? `<div class="trow" style="cursor:default;grid-template-columns:36px minmax(0,1fr) auto auto"><div class="ava g-ris">${ic(t.amount >= 0 ? "up" : "down")}</div><div class="grow"><div class="t1">Rettifica saldo</div><div class="t2">${t.amount >= 0 ? "Interessi o differenza col saldo reale" : "Commissioni o differenza col saldo reale"}</div></div><div class="am mono ${t.amount >= 0 ? "inc" : ""}">${sgnc(t.amount)}</div><button class="btn b-dghost b-icon b-sm" data-act="pot-adj-del" data-id="${esc(c.id)}" data-d="${esc(t.date)}" aria-label="Togli rettifica">${ic("x")}</button></div>` : t.from === c.id ? txRow(t) : txRow(t).replace(`class="am mono "`, `class="am mono inc"`).replace(">−", ">+")).join("");
   }).join("") + `</div></div>`;
   return h;
 }
@@ -2279,6 +2315,10 @@ document.addEventListener("click", async e => {
   if (act === "go-prev") { $("#prevM").click(); return; }
   if (act === "cl-open") return openClose(a.dataset.m);
   if (act === "cl-neg") return openClose(a.dataset.m, true);
+  if (act === "pot-bal") return openPotBal(a.dataset.id || null);
+  if (act === "pb-close") return closePotBal();
+  if (act === "pb-save") return savePotBal();
+  if (act === "pot-adj-del") { const cfg = structuredClone(S.cfg), c = cfg.categories.find(y => y.id === a.dataset.id); if (!c?.potAdj) return; delete c.potAdj[a.dataset.d]; S.db.doc("config/main").set(cfg).then(() => { S.cfg = cfg; render(); toast("Rettifica tolta"); }).catch(fail); return; }
   if (act === "zero-ok") { const cfg = structuredClone(S.cfg); cfg.annual = (cfg.annual || []).map(x => !x.sub && !(Number(x.amount) > 0) ? {...x, zeroOk:true} : x); S.db.doc("config/main").set(cfg).then(() => { S.cfg = cfg; render(); toast("Avviso nascosto per queste voci"); }).catch(fail); return; }
   if (act === "cl-reopen") { S.reopenAsk = a.dataset.m; render(); return; }
   if (act === "cl-reopen-no") { S.reopenAsk = null; render(); return; }
@@ -2341,6 +2381,7 @@ document.addEventListener("input", e => {
   if (t.id === "msearch") { S.q = t.value; render(); return; }
   if (t.dataset?.sim) { const v = {...simVals()}; const n = parseAmt(t.value); v[t.dataset.sim] = isFinite(n) ? n : 0; S.sim = v; const o = $("#simOut"); if (o) o.innerHTML = simOut(v); return; }
   if (t.closest?.("#cld")) { readClose(); const pos = t.selectionStart, id = t.id, cli = t.closest("[data-cli]")?.dataset.cli; drawClose(); const el = id ? document.getElementById(id) : document.querySelector(`#cld [data-cli="${cli}"] [data-f=amt]`); if (el) { el.focus(); try { el.setSelectionRange(pos, pos); } catch {} } return; }
+  if (t.closest?.("#pbd") && t.dataset.pb != null) { readPotBal(); const r = pbState.rows[Number(t.dataset.pb)], v = parseAmt(r.v), d = isFinite(v) && r.v !== "" ? r2(v - r.calc) : null, el = $("#pbd" + t.dataset.pb); if (el) { el.textContent = d == null ? "" : Math.abs(d) < 0.01 ? "nessuna differenza" : sgnc(d); el.style.color = d == null || Math.abs(d) < 0.01 ? "var(--muted-foreground)" : d > 0 ? "var(--success)" : "var(--destructive)"; } }
   if (t.closest?.("#nwd") && (t.dataset.f === "v" || t.dataset.f === "sh")) { readNw(); const el = $("#nwTot"); if (el) el.textContent = eur(nwState.rows.reduce((a, x) => a + nwRowMine(x), 0)); }
   if (t.id === "sNote" && sheetState && sheetState.kind !== "inc" && !sheetState.id && (!sheetState.cat || sheetState.catAuto)) {
     const r = ruleFor(t.value), pos = t.selectionStart;
@@ -2387,6 +2428,7 @@ document.addEventListener("change", e => {
     x0 = null; }, {passive:true}); })();
 document.addEventListener("keydown", e => {
   if (nwState) { if (e.key === "Escape") closeNw(); return; }
+  if (pbState) { if (e.key === "Escape") closePotBal(); return; }
   if (closeState) { if (e.key === "Escape") closeClose(); return; }
   if (S.taxEdit) { if (e.key === "Escape") closeTaxEdit(); if (e.key === "Enter" && e.target.tagName === "INPUT") { e.preventDefault(); saveTax(false); } return; }
   if (potState) { if (e.key === "Escape") closePotEdit(); if (e.key === "Enter" && e.target.tagName === "INPUT" && e.target.type !== "checkbox") { e.preventDefault(); savePot(); } return; }
