@@ -702,7 +702,7 @@ function computeMonth(txs, budCats, m) {
   const frac = daysIn(m) ? day / daysIn(m) : 0;
   const spent = {}; const inc = incomeFor(m); const income = inc.monthly;
   for (const t of txs) {
-    if (t.kind === "inc" || t.kind === "tax") continue; // le tasse si pagano dalla quota accantonata, non dal budget
+    if (t.kind === "inc" || t.kind === "tax" || t.kind === "pend") continue; // le tasse si pagano dalla quota accantonata, non dal budget
     if (t.cat === "fondo" || t.from) continue; // spese annuali e spese pagate da un salvadanaio non pesano sul mese
     if (isAvanzoTx(t)) continue; // l'avanzo spostato a fine mese viene dal conto, non dalle entrate del mese
     spent[t.cat] = (spent[t.cat] || 0) + (Number(t.amount) || 0);
@@ -739,6 +739,7 @@ async function boot() {
   db.collection("tx").where("kind", "==", "inc").onSnapshot(snap => { S.incTx = snap.docs.map(d => ({id:d.id, ...d.data()})); S.trendCache = null; render(); }, e => fail(e));
   db.collection("tx").where("cat", "==", "fondo").onSnapshot(snap => { S.fundTx = snap.docs.map(d => ({id:d.id, ...d.data()})); render(); }, e => fail(e));
   db.collection("nw").onSnapshot(snap => { S.nw = snap.docs.map(d => d.data()).sort((a, b) => a.month.localeCompare(b.month)); render(); }, e => fail(e));
+  db.collection("tx").where("kind", "==", "pend").onSnapshot(snap => { S.pendTx = snap.docs.map(d => ({id:d.id, ...d.data()})).sort((a, b) => (a.date || "").localeCompare(b.date || "")); render(); }, e => fail(e));
   db.collection("tx").where("kind", "==", "tax").onSnapshot(snap => { S.taxTx = snap.docs.map(d => ({id:d.id, ...d.data()})); render(); }, e => fail(e));
   db.collection("tx").where("kind", "==", "exp").onSnapshot(snap => { S.expTx = snap.docs.map(d => ({id:d.id, ...d.data()})); render(); }, e => fail(e));
   subscribeMonth();
@@ -750,7 +751,7 @@ function subscribeMonth() {
   S.txLoaded = false; S.budgetLoaded = false; S.tx = []; S.budget = null; S.prevBudget = null; S.budgetDraft = null;
   const m = S.month;
   S.unsubTx = S.db.collection("tx").where("month", "==", m).onSnapshot(snap => {
-    S.tx = snap.docs.map(d => ({id:d.id, ...d.data()})).sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.created || 0) - (a.created || 0));
+    S.tx = snap.docs.map(d => ({id:d.id, ...d.data()})).filter(t => t.kind !== "pend").sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.created || 0) - (a.created || 0));
     S.txLoaded = true; render();
   }, e => fail(e));
   S.unsubBud = S.db.doc("budgets/" + m).onSnapshot(async snap => {
@@ -884,6 +885,7 @@ function viewMese() {
     else if (S.month === curMonth() && isClosed(pm) && !S.cfg.closed[pm].negDone && S.txLoaded) { nv = negOf(pm, computeMonth(S.expTx.filter(t => t.month === pm), S.prevBudget?.month === pm ? S.prevBudget.cats : null, pm)); if (nv) nm = pm; }
     if (nm) h += `<div class="alert" style="border-color:var(--destructive)"><div class="row" style="align-items:flex-start">${ic("info")}<div><div class="t">${esc(mLong(nm))} chiuso in negativo di ${eur0(nv)}</div><div class="muted sm">Scegli se e come recuperarlo nei prossimi mesi</div></div></div><button class="btn b-default b-sm" data-act="cl-neg" data-m="${esc(nm)}">Gestisci</button></div>`; }
   if (S.month === curMonth()) h += nwRemindAlert();
+  if (S.month === curMonth()) { const old = (S.pendTx || []).filter(t => daysSince(t.date) > 60); if (old.length) h += `<div class="alert"><div class="row" style="align-items:flex-start">${ic("cal")}<div><div class="t">${old.length === 1 ? `Fattura ${esc(srcById(old[0].src)?.name || "")} da incassare da ${daysSince(old[0].date)} giorni` : `${old.length} fatture da incassare da più di 60 giorni`}</div><div class="muted sm">Controlla se è arrivato il pagamento o sollecita</div></div></div><button class="btn b-outline b-sm" data-tab="entrate">Vedi</button></div>`; }
   if (S.month === curMonth()) { const z = (S.cfg.annual || []).filter(a => !a.sub && !(Number(a.amount) > 0) && !a.zeroOk); if (z.length) h += `<div class="alert"><div class="row" style="align-items:flex-start">${ic("info")}<div><div class="t">Spese annuali senza importo: ${esc(z.map(a => a.name).join(", "))}</div><div class="muted sm">Finché sono a 0 € non vengono accantonate e il budget mensile risulta più alto del vero</div></div></div><div class="row" style="gap:6px"><button class="btn b-outline b-sm" data-act="zero-ok" title="Non mostrare più l'avviso per queste voci: restano a 0 € finché non metti un importo">Vanno bene a 0</button><button class="btn b-outline b-sm" data-act="open-fund" data-k="annual">Sistema</button></div></div>`; }
   if (S.month === curMonth()) for (const d of taxStatus().open.filter(d => d.date <= addDaysISO(todayISO(), 10))) h += `<div class="alert"><div class="row" style="align-items:flex-start">${ic("receipt")}<div><div class="t">${esc(d.name)}: scade ${d.date === todayISO() ? "oggi" : d.date < todayISO() ? "il " + esc(fmtDateS(d.date)) + " (scaduta)" : "il " + esc(fmtDateS(d.date))}</div><div class="muted sm">${Number(d.amount) ? `<span class="mono">${eur(d.amount)}</span> · ` : ""}${d.pot === false ? "dal conto" : "dalla quota tasse"}</div></div></div><div class="row" style="gap:6px"><button class="btn b-default b-sm" data-act="tax-pay" data-id="${esc(d.id)}">Pagata</button><button class="btn b-outline b-sm" data-tab="entrate">Tasse</button></div></div>`;
   if (S.month === curMonth()) for (const x of expiredSubs()) { const fund = x.cat !== SUBCAT && !x.sub, when = x.renew === todayISO() ? "oggi" : "il " + esc(fmtDateS(x.renew));
@@ -986,7 +988,7 @@ function txRow(t) {
   const isInc = t.kind === "inc";
   const name = isInc ? (srcById(t.src)?.name || "Entrata") : t.cat === "fondo" ? (annualById(t.annId)?.name || "Spesa annuale") : (catById(t.cat)?.name || t.cat);
   const g = isInc ? "inc" : t.cat === "fondo" ? "fondo" : (catById(t.cat)?.group || "ess");
-  const sub = [t.cat === "fondo" ? "Spesa annuale" : "", t.from ? "dal salvadanaio " + (catById(t.from)?.name || "") : "", t.note, isInc && t.gross ? "fatturato " + eur(t.gross) : ""].filter(Boolean).join(" · ");
+  const sub = [t.cat === "fondo" ? "Spesa annuale" : "", t.from ? "dal salvadanaio " + (catById(t.from)?.name || "") : "", t.note, isInc && t.gross ? "fatturato " + eur(t.gross) : "", isInc && t.issued ? "fattura del " + fmtDateS(t.issued) : ""].filter(Boolean).join(" · ");
   return `<button class="trow" data-act="edit" data-id="${esc(t.id)}"><div class="ava g-${g}">${ic(isInc ? "in" : catIcon(t.cat))}</div><div class="grow"><div class="t1">${esc(name)}</div>${sub || t.tag ? `<div class="t2">${t.tag ? `<span class="badge bd-outline" data-act="open-tag" data-tag="${esc(t.tag)}" style="padding:0 5px;margin-right:4px;cursor:pointer">#${esc(t.tag)}</span>` : ""}${esc(sub)}</div>` : ""}</div><div class="am mono ${isInc ? "inc" : ""}">${isInc ? "+" : "−"}${eur(t.amount)}</div></button>`;
 }
 
@@ -994,7 +996,7 @@ function allTags() { return [...new Set([...(S.cfg.tags || []), ...S.tx.map(t =>
 function openTag(tag) {
   S.unsubTag?.(); S.tagView = tag; S.tagTx = null; S.view = "movimenti";
   S.unsubTag = S.db.collection("tx").where("tag", "==", tag).onSnapshot(snap => {
-    S.tagTx = snap.docs.map(d => ({id:d.id, ...d.data()})).sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.created || 0) - (a.created || 0)); render();
+    S.tagTx = snap.docs.map(d => ({id:d.id, ...d.data()})).filter(t => t.kind !== "pend").sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.created || 0) - (a.created || 0)); render();
   }, e => fail(e));
   window.scrollTo(0, 0); render();
 }
@@ -1722,6 +1724,15 @@ function histCard(c) { const nm = new Set([...Object.keys(c.incomeHistory || {})
   <div class="card-c tw" style="padding-top:8px"><table><thead><tr><th>Mese</th><th class="r">Lordo €</th><th class="r">Netto €</th><th></th></tr></thead><tbody>${[...new Set([...Object.keys(c.incomeHistory || {}), ...Object.keys(c.incomeHistoryGross || {})])].sort().map(k => `<tr data-row="hist" data-id="${esc(k)}">${ROW.hist({m:k, v:c.incomeHistory?.[k], g:c.incomeHistoryGross?.[k]})}</tr>`).join("")}</tbody></table>
   <div style="margin-top:10px"><button class="btn b-outline b-sm" data-act="add-row" data-kind="hist">${ic("plus")}Aggiungi mese</button></div>
   <p class="xs muted" style="margin-top:10px">Vale solo per i mesi prima di "Accantona a partire da". Dopo, contano le entrate registrate.</p></div></details>`; }
+/* fatture emesse e non ancora pagate: contano solo quando le segni incassate */
+const daysSince = d => Math.round((new Date(todayISO() + "T12:00:00") - new Date(d + "T12:00:00")) / 864e5);
+function pendCard() {
+  const L = S.pendTx || []; if (!L.length) return "";
+  const gross = L.reduce((a, t) => a + (Number(t.gross) || 0), 0), net = L.reduce((a, t) => a + (Number(t.amount) || 0), 0);
+  return `<div class="card" id="pendCard"><div class="card-h"><div><div class="card-t">Da incassare</div><div class="card-d">${L.length} ${L.length === 1 ? "fattura" : "fatture"} · lordo <span class="mono">${eur(gross)}</span> · netto <span class="mono">${eur(net)}</span> · non ancora nel budget</div></div></div>
+    <div class="card-c flush" style="padding-top:0">${L.map(t => { const n = daysSince(t.date); return `<div class="trow" style="cursor:default;grid-template-columns:36px minmax(0,1fr) auto"><div class="ava g-inc">${ic("cal")}</div><div class="grow"><div class="t1">${esc(srcById(t.src)?.name || "Fattura")}${t.note ? ` · ${esc(t.note)}` : ""}</div><div class="t2">emessa il ${esc(fmtDateS(t.date))} · <span style="color:${n > 60 ? "var(--destructive)" : "inherit"}">${n} ${n === 1 ? "giorno" : "giorni"}</span> · netto <span class="mono">${eur(t.amount)}</span></div></div><div class="am mono">${eur(Number(t.gross) || t.amount)}</div></div>
+      <div class="row" style="gap:8px;justify-content:flex-end;padding:0 0 12px;flex-wrap:wrap"><label class="xs muted" for="pd_${esc(t.id)}">Incassata il</label><input id="pd_${esc(t.id)}" class="inp" type="date" style="width:auto" value="${esc(todayISO() < t.date ? t.date : todayISO())}"><button class="btn b-default b-sm" data-act="pend-ok" data-id="${esc(t.id)}">${ic("check")}Incassata</button><button class="btn b-dghost b-icon b-sm" data-act="pend-del" data-id="${esc(t.id)}" aria-label="Elimina fattura da incassare">${ic("trash")}</button></div>`; }).join(`<div class="sep"></div>`)}</div></div>`;
+}
 function viewEntrate() {
   const c = S.cfg, inc = incomeFor(S.month), list = S.tx.filter(t => t.kind === "inc");
   const tot = list.reduce((a, t) => a + (Number(t.amount) || 0), 0);
@@ -1730,6 +1741,7 @@ function viewEntrate() {
   <div class="card hero"><div class="card-c stack" style="gap:14px"><div><div class="lbl has-tip" tabindex="0" aria-describedby="incTip2" style="display:inline-block">Entrate mensili di ${esc(mLong(S.month))} <span class="tip-i" aria-hidden="true">?</span><div class="tip" role="tooltip" id="incTip2">Le fatture contano per 1/12 del netto per 12 mesi: oggi il totale degli ultimi 12 mesi è <span class="mono">${eur0(inc.pool)}</span>. Le entrate extra contano solo nel mese in cui arrivano. La borsa entra da sola ogni mese.</div></div><div class="big mono">${eur(inc.monthly)}</div></div>
     <div class="stats"><div class="stat" style="padding:0"><div class="l">Fissi (borsa)</div><div class="v mono">${eur0(inc.fixed)}</div></div><div class="stat" style="padding:0"><div class="l">Fatture ÷ 12${inc.pct < 100 ? ` · ${inc.pct}%` : ""}</div><div class="v mono">${eur0(inc.counted / 12)}</div></div><div class="stat" style="padding:0"><div class="l">Extra del mese</div><div class="v mono">${eur0(inc.extra)}</div></div></div>
 </div></div>
+  ${pendCard()}
   <div class="card"><div class="card-h"><div><div class="card-t">Registrate a ${esc(mLong(S.month))}</div><div class="card-d">${list.length ? `${list.length} ${list.length === 1 ? "entrata" : "entrate"} · netto <span class="mono">${eur(tot)}</span>` : "Nessuna entrata registrata"}</div></div></div>
     ${list.length ? `<div class="card-c flush">${list.map(txRow).join("")}</div>` : ""}</div>
   <div class="card"><div class="card-c between" style="gap:10px;flex-wrap:wrap"><div><div class="card-t" style="font-size:14px">Prudenza sulle fatture</div><div class="card-d">Quanta parte della media delle fatture usare per il budget. Sotto il 100% il budget resta più basso e quello che entra in più diventa avanzo.${inc.pct < 100 ? ` A ${esc(mLong(S.month))} conti <span class="mono">${eur0(inc.counted / 12)}</span> invece di <span class="mono">${eur0(inc.pool / 12)}</span> al mese.` : ""} Una modifica vale da ${esc(mLong(firstOpenMonth()))}: i mesi già chiusi restano com'erano.${Object.keys(S.cfg.invoicePctChanges || {}).length ? `<br><span class="xs">${Object.entries(S.cfg.invoicePctChanges).sort().map(([k, v]) => `${v}% da ${esc(mShort(k))}`).join(" · ")}</span>` : ""}</div></div>
@@ -1890,9 +1902,10 @@ function drawSheet(focus) {
           return `</div><div class="qgrid">${top.map(c => `<button class="qtile" data-s="cat" data-v="${esc(c.id)}" aria-pressed="${st.cat === c.id}"><span class="cic g-${c.group}">${ic(catIcon(c.id))}</span><span>${esc(c.name)}</span></button>`).join("")}</div>
           ${open ? `<div class="togs" style="margin-top:8px">${rest.map(c => `<button class="tog" data-s="cat" data-v="${esc(c.id)}" aria-pressed="${st.cat === c.id}"><span class="gd g-${c.group}"></span>${esc(c.name)}</button>`).join("")}<button class="tog" data-s="cat" data-v="fondo" aria-pressed="${st.cat === "fondo"}"><span class="gd g-fondo"></span>Spesa annuale</button></div>` : `<button class="btn b-ghost b-sm" data-act="s-more" style="margin-top:6px;align-self:flex-start">Altre categorie (${rest.length + 1})</button>`}<div>`; })()}
     </div></div>
+    ${isInc && !st.id && src && src.kind !== "extra" && !isFixedSrc(src.id) ? `<div class="field"><span class="lab">Stato</span><div class="togs" role="group" aria-label="Stato del pagamento"><button class="tog" data-s="pend" data-v="" aria-pressed="${st.pend !== "1"}">${ic("check")}Incassata</button><button class="tog" data-s="pend" data-v="1" aria-pressed="${st.pend === "1"}">${ic("cal")}Da incassare</button></div>${st.pend === "1" ? `<p class="xs muted" style="margin-top:4px">Non conta nelle entrate né nelle tasse finché non la segni come incassata in Entrate.</p>` : ""}</div>` : ""}
     ${canFrom(st) ? `<div class="field"><span class="lab">Pagata con</span><div class="togs" role="group" aria-label="Pagata con"><button class="tog" data-s="from" data-v="" aria-pressed="${!st.from}">Budget del mese</button>${pots().map(c => `<button class="tog" data-s="from" data-v="${esc(c.id)}" aria-pressed="${st.from === c.id}"><span class="gd g-ris"></span>${esc(c.name)} <span class="mono muted">${eur0(potAvailFor(st, c.id))}</span></button>`).join("")}</div><p class="xs muted" id="sFrom">${fromHint(st)}</p></div>` : ""}
     ${!isInc && st.cat === "fondo" ? `<div class="field"><label for="sAnn">Quale spesa annuale?</label><select id="sAnn" class="inp"><option value="">Scegli…</option>${(S.cfg.annual || []).map(a => `<option value="${esc(a.id)}" ${st.annId === a.id ? "selected" : ""}>${esc(a.name)}${a.sub ? " (abbonamento)" : ""}</option>`).join("")}</select></div>${(it => it && !it.sub ? `<div class="grid2"><div class="field"><label for="sCov">Mesi coperti</label><input id="sCov" class="inp mono" inputmode="numeric" value="${esc(String(st.covers ?? perMonths(it)))}"></div>${shareAt(it, st.date) < 100 ? `<label class="row sm" style="gap:8px;cursor:pointer;align-self:end;padding-bottom:10px"><input type="checkbox" id="sFull" ${st.full !== false ? "checked" : ""}>Importo della bolletta intera · registro il ${shareAt(it, st.date)}%</label>` : ""}</div>` : "")((S.cfg.annual || []).find(a => a.id === st.annId))}` : ""}
-    <div class="grid2"><div class="field"><label for="sDate">Data</label><input id="sDate" class="inp" type="date" value="${esc(st.date)}"></div>
+    <div class="grid2"><div class="field"><label for="sDate">${isInc && st.pend === "1" ? "Data della fattura" : "Data"}</label><input id="sDate" class="inp" type="date" value="${esc(st.date)}"></div>
       <div class="field"><label for="sTag">Tag</label><input id="sTag" class="inp" list="tagList" placeholder="es. Londra" value="${esc(st.tag)}"><datalist id="tagList">${tags.map(t => `<option value="${esc(t)}">`).join("")}</datalist></div></div>
     <div class="field"><label for="sNote">Nota</label><input id="sNote" class="inp" placeholder="${isInc ? (src?.kind === "extra" ? "es. Vinted, giacca" : "es. fattura n. 12") : "es. pranzo con colleghi"}" value="${esc(st.note)}">${st.catAuto && st.cat ? `<p class="xs muted" id="sRule" style="margin-top:4px">${ic("check")} Categoria scelta da ${esc(st.catAuto)}</p>` : `<p class="xs muted" id="sRule" style="margin-top:4px" hidden></p>`}</div>
     <div class="dfoot">
@@ -1945,6 +1958,7 @@ async function saveSheet() {
   if (st.kind === "inc") {
     const src = srcById(st.src); if (!src) return toast("Scegli la fonte");
     Object.assign(doc, {src:src.id, amount:r2(amt * src.pct / 100), pct:src.pct, cat:"_inc"}); if (src.kind !== "extra") doc.gross = r2(amt);
+    if (st.pend === "1" && !st.id && src.kind !== "extra" && !isFixedSrc(src.id)) doc.kind = "pend"; // fattura emessa, non ancora pagata
   } else {
     if (!st.cat) return toast("Scegli una categoria");
     if (st.cat === "fondo" && !st.annId) return toast("Scegli quale spesa annuale");
@@ -1963,7 +1977,7 @@ async function saveSheet() {
     if (over) await S.db.collection("tx").doc().set(over);
     if (doc.tag && !(S.cfg.tags || []).includes(doc.tag)) { const cfg = structuredClone(S.cfg); cfg.tags = [...(cfg.tags || []), doc.tag]; S.cfg = cfg; S.db.doc("config/main").set(cfg).catch(fail); }
     closeSheet();
-    toast(st.id ? "Movimento modificato" : (doc.month !== S.month ? `Salvato in ${mLong(doc.month)}` : "Movimento salvato"));
+    toast(doc.kind === "pend" ? "Fattura da incassare salvata in Entrate" : st.id ? "Movimento modificato" : (doc.month !== S.month ? `Salvato in ${mLong(doc.month)}` : "Movimento salvato"));
   } catch (e) { fail(e); const b = $("#sSave"); if (b) b.disabled = false; }
 }
 
@@ -2325,6 +2339,9 @@ document.addEventListener("click", async e => {
   if (act === "go-prev") { $("#prevM").click(); return; }
   if (act === "cl-open") return openClose(a.dataset.m);
   if (act === "cl-neg") return openClose(a.dataset.m, true);
+  if (act === "pend-ok") { const t = (S.pendTx || []).find(x => x.id === a.dataset.id); if (!t) return; const d = $("#pd_" + t.id)?.value || todayISO(); if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return toast("Data non valida");
+    const {id, ...data} = t; a.disabled = true; S.db.doc("tx/" + id).set({...data, kind:"inc", date:d, month:d.slice(0, 7), issued:t.date}).then(() => toast(`Incassata il ${fmtDateS(d)}: conta in ${mLong(d.slice(0, 7))}`)).catch(fail); return; }
+  if (act === "pend-del") { if (a.dataset.confirm !== "1") { a.dataset.confirm = "1"; a.classList.add("b-destructive"); a.innerHTML = "Elimina?"; return; } S.db.doc("tx/" + a.dataset.id).delete().then(() => toast("Fattura tolta")).catch(fail); return; }
   if (act === "pot-bal") return openPotBal(a.dataset.id || null);
   if (act === "pb-close") return closePotBal();
   if (act === "pb-save") return savePotBal();
