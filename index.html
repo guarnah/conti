@@ -689,7 +689,7 @@ const unRecover = (o, m) => { const g = Number(S.cfg?.recover?.[m]) || 0; return
 const applyRecover = (o, m = S.month) => { const g = Number(S.cfg?.recover?.[m]) || 0; return g > 0 ? cutVar(o, g) : o; };
 function budgetFor() {
   if (S.budget?.cats) return {cats:S.budget.cats, full:S.budget.full || null, draft:false};
-  if (S.prevBudget?.cats) { const o = S.prevBudget.full ? {...S.prevBudget.full} : unRecover(S.prevBudget.cats, S.prevBudget.month); cats().forEach(c => { if (!(c.id in o) && Number(c.defaultBudget)) o[c.id] = Number(c.defaultBudget); }); const f = recBudget(o); return {cats:applyRecover(f), full:f, draft:true, from:S.prevBudget.month}; }
+  if (S.prevBudget?.cats) { const o = S.prevBudget.full ? {...S.prevBudget.full} : unRecover(S.prevBudget.cats, S.prevBudget.month); (S.cfg?.categories || []).forEach(c => { if (c.hidden) delete o[c.id]; }); cats().forEach(c => { if (!(c.id in o) && Number(c.defaultBudget)) o[c.id] = Number(c.defaultBudget); }); const f = recBudget(o); return {cats:applyRecover(f), full:f, draft:true, from:S.prevBudget.month}; }
   const o = {}; cats().forEach(c => o[c.id] = Number(c.defaultBudget) || 0);
   const f = recBudget(o); return {cats:applyRecover(f), full:f, draft:true, from:null};
 }
@@ -1100,6 +1100,7 @@ async function loadCloseBudgets(x) {
     const nextSaved = bn.exists ? bn.data().cats : null;
     const base = nextSaved ? {...(bn.data().full || nextSaved)} : (() => { const o = {...curFull}; cats().forEach(c => { if (!(c.id in o) && Number(c.defaultBudget)) o[c.id] = Number(c.defaultBudget); }); return recBudget(o, next); })();
     if (restCat()) delete base[restCat()];
+    if (!nextSaved) (S.cfg?.categories || []).forEach(c => { if (c.hidden) delete base[c.id]; }); // categorie e salvadanai eliminati non passano al mese dopo
     const r = computeMonth(S.expTx.filter(t => t.month === x.m), cur, x.m);
     x.bud = {cur, nextSaved, nextDoc:bn.exists ? bn.data() : null, base, r};
   } catch (e) { console.warn(e); x.bud = {error:true}; }
@@ -2015,8 +2016,17 @@ async function savePot() {
 }
 async function deletePot() {
   if (!potState.confirmDel) { readPotInputs(); potState.confirmDel = true; return drawPotEdit(); }
-  const cfg = structuredClone(S.cfg); const k = cfg.categories.find(c => c.id === potState.item.id); if (k) k.hidden = true;
-  try { await S.db.doc("config/main").set(cfg); S.cfg = cfg; closePotEdit(); S.potView = ""; render(); toast("Salvadanaio eliminato · i movimenti restano"); } catch (e) { fail(e); }
+  const id = potState.item.id, cfg = structuredClone(S.cfg); const k = cfg.categories.find(c => c.id === id); if (k) k.hidden = true;
+  cfg.recurring = (cfg.recurring || []).filter(x => x.cat !== id); // niente più versamenti ricorrenti
+  try {
+    await S.db.doc("config/main").set(cfg); S.cfg = cfg;
+    // budget già salvati: si toglie dal mese in corso (se non ci hai ancora versato) e dai mesi dopo; la cifra torna al resto
+    const cur = curMonth(), q = await S.db.collection("budgets").where("month", ">=", cur).get(); let n = 0;
+    for (const d of q.docs) { const b = d.data(); if (!b.cats || !(id in b.cats)) continue; if (b.month === cur && S.expTx.some(t => t.month === cur && t.cat === id)) continue;
+      const cats2 = {...b.cats}; delete cats2[id]; const full = b.full ? {...b.full} : null; if (full) delete full[id];
+      await S.db.doc("budgets/" + b.month).set({...b, cats:cats2, ...(full ? {full} : {})}); n++; }
+    closePotEdit(); S.potView = ""; render(); toast("Salvadanaio eliminato · i movimenti restano" + (n ? " · tolto dal budget" : ""));
+  } catch (e) { fail(e); }
 }
 
 /* ---------- drawer fondo spese annuali ---------- */
