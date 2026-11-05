@@ -1953,7 +1953,8 @@ function readSheetInputs() {
 }
 async function saveSheet() {
   readSheetInputs(); const st = sheetState; const amt = parseAmt(st.amountStr);
-  if (!isFinite(amt) || amt <= 0) return toast("Inserisci un importo");
+  const billZero = st.kind === "exp" && st.cat === "fondo" && isBill((S.cfg.annual || []).find(x => x.id === st.annId) || {}); // una bolletta può essere a 0 € (conguaglio, credito): serve comunque per imparare
+  if (!isFinite(amt) || amt < 0 || (amt === 0 && !billZero)) return toast("Inserisci un importo");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(st.date)) return toast("Data non valida");
   const doc = {kind:st.kind, date:st.date, month:st.date.slice(0, 7), note:st.note.trim(), tag:st.tag, created:st.created || Date.now()};
   if (st.kind === "inc") {
