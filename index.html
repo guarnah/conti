@@ -990,7 +990,7 @@ function txRow(t) {
   const name = isInc ? (srcById(t.src)?.name || "Entrata") : t.cat === "fondo" ? (annualById(t.annId)?.name || "Spesa annuale") : (catById(t.cat)?.name || t.cat);
   const g = isInc ? "inc" : t.cat === "fondo" ? "fondo" : (catById(t.cat)?.group || "ess");
   const sub = [t.cat === "fondo" ? "Spesa annuale" : "", t.from ? "dal salvadanaio " + (catById(t.from)?.name || "") : "", t.note, isInc && t.gross ? "fatturato " + eur(t.gross) : "", isInc && t.issued ? "fattura del " + fmtDateS(t.issued) : ""].filter(Boolean).join(" · ");
-  return `<button class="trow" data-act="edit" data-id="${esc(t.id)}"><div class="ava g-${g}">${ic(isInc ? "in" : catIcon(t.cat))}</div><div class="grow"><div class="t1">${esc(name)}</div>${sub || t.tag ? `<div class="t2">${t.tag ? `<span class="badge bd-outline" data-act="open-tag" data-tag="${esc(t.tag)}" style="padding:0 5px;margin-right:4px;cursor:pointer">#${esc(t.tag)}</span>` : ""}${esc(sub)}</div>` : ""}</div><div class="am mono ${isInc ? "inc" : ""}">${isInc ? "+" : "−"}${eur(t.amount)}</div></button>`;
+  return `<button class="trow" data-act="edit" data-id="${esc(t.id)}"><div class="ava g-${g}">${ic(isInc ? "in" : catIcon(t.cat))}</div><div class="grow"><div class="t1">${esc(name)}</div>${sub || t.tag ? `<div class="t2">${t.tag ? `<span class="badge bd-outline" data-act="open-tag" data-tag="${esc(t.tag)}" style="padding:0 5px;margin-right:4px;cursor:pointer">#${esc(t.tag)}</span>` : ""}${esc(sub)}</div>` : ""}</div><div class="am mono ${isInc ? "inc" : ""}"${t.from ? ` style="color:var(--muted-foreground)" title="Pagata con il salvadanaio: non conta di nuovo nelle uscite"` : ""}>${isInc ? "+" : "−"}${eur(t.amount)}</div></button>`;
 }
 
 function allTags() { return [...new Set([...(S.cfg.tags || []), ...S.tx.map(t => t.tag).filter(Boolean)])]; }
@@ -1006,7 +1006,7 @@ function viewTag() {
   const tag = S.tagView, list = S.tagTx;
   let h = `<div class="row"><button class="btn b-ghost b-sm" data-act="close-tag"><svg class="i" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg>Movimenti</button></div>`;
   if (!list) return h + `<div class="card card-c stack"><div class="skel" style="width:40%"></div><div class="skel" style="height:36px;width:50%"></div></div>`;
-  const exp = list.filter(t => t.kind !== "inc"), incs = list.filter(t => t.kind === "inc");
+  const exp = list.filter(t => t.kind !== "inc" && !t.from), incs = list.filter(t => t.kind === "inc");
   const tot = exp.reduce((a, t) => a + (Number(t.amount) || 0), 0), inc = incs.reduce((a, t) => a + (Number(t.amount) || 0), 0);
   const months = [...new Set(list.map(t => t.month))].sort();
   const span = months.length ? (months.length === 1 ? mLabel(months[0]) : `${mLabel(months[0], {month:"short", year:"numeric"})} – ${mLabel(months[months.length - 1], {month:"short", year:"numeric"})}`) : "";
@@ -1020,7 +1020,7 @@ function viewTag() {
   const days = []; for (const t of list) { const d = days[days.length - 1]; if (d && d.date === t.date) d.items.push(t); else days.push({date:t.date, items:[t]}); }
   let lastM = "";
   h += `<div class="card"><div class="card-c flush" style="padding-top:0">` + days.map(d => {
-    const out = d.items.reduce((a, t) => a + (t.kind === "inc" ? 0 : Number(t.amount) || 0), 0);
+    const out = d.items.reduce((a, t) => a + (t.kind === "inc" || t.from ? 0 : Number(t.amount) || 0), 0);
     const m = d.date.slice(0, 7); const mh = m !== lastM && months.length > 1 ? `<div class="dayh" style="color:var(--foreground);font-size:13px;padding-top:18px;text-transform:capitalize">${esc(mLabel(m))}</div>` : ""; lastM = m;
     return mh + `<div class="dayh"><span>${esc(dayLabel(d.date))}</span>${out ? `<span class="mono">−${eur(out)}</span>` : ""}</div>` + d.items.map(txRow).join("");
   }).join("") + `</div></div>`;
@@ -1441,14 +1441,14 @@ function txMatches(t, q) {
   return [name, t.note, t.tag, amt, amtIt, t.from ? catById(t.from)?.name : ""].some(v => (v || "").toLowerCase().includes(q));
 }
 function movSummary(list) {
-  const exp = list.filter(t => t.kind !== "inc");
+  const exp = list.filter(t => t.kind !== "inc" && !t.from), fromPot = list.filter(t => t.kind !== "inc" && t.from).reduce((a, t) => a + (Number(t.amount) || 0), 0);
   if (!exp.length) return "";
   const grp = {ess:0, ext:0, ris:0, fondo:0}, byCat = {};
   exp.forEach(t => { const v = Number(t.amount) || 0; const g = t.cat === "fondo" ? "fondo" : (catById(t.cat)?.group || "ess"); grp[g] += v; if (t.cat !== "fondo" && g !== "ris") byCat[t.cat] = (byCat[t.cat] || 0) + v; });
   const tot = Object.values(grp).reduce((a, v) => a + v, 0);
   const top = Object.entries(byCat).sort((a, b) => b[1] - a[1]).slice(0, 3);
   const G = [["ess", "Essenziali", "var(--chart-2)"], ["ext", "Extra", "var(--chart-1)"], ["ris", "Risparmio", "var(--chart-3)"], ["fondo", "Spese annuali", "var(--muted-foreground)"]].filter(([k]) => grp[k] > 0);
-  return `<div class="card msum"><div class="card-h"><div><div class="card-t">Riepilogo di ${esc(mLong(S.month))}</div><div class="card-d">Uscite registrate <span class="mono">${eur(tot)}</span></div></div></div><div class="card-c stack" style="gap:12px">
+  return `<div class="card msum"><div class="card-h"><div><div class="card-t">Riepilogo di ${esc(mLong(S.month))}</div><div class="card-d">Uscite registrate <span class="mono">${eur(tot)}</span>${fromPot ? ` · in più <span class="mono">${eur(fromPot)}</span> pagati con i salvadanai, già contati quando li hai messi da parte` : ""}</div></div></div><div class="card-c stack" style="gap:12px">
     <div class="stackbar">${G.map(([k, n, c]) => `<i style="width:${grp[k] / tot * 100}%;background:${c}" title="${esc(n)}: ${eur(grp[k])}"></i>`).join("")}</div>
     <div class="stack" style="gap:6px">${G.map(([k, n, c]) => `<div class="between sm"><span class="row"><span class="gd" style="background:${c}"></span>${n}</span><span class="mono">${eur0(grp[k])} <span class="muted">· ${Math.round(grp[k] / tot * 100)}%</span></span></div>`).join("")}</div>
     ${top.length ? `<div class="sep" style="margin:0"></div><div class="stack" style="gap:6px"><div class="xs muted">Dove hai speso di più</div>${top.map(([id, v], i) => `<button class="between sm" data-act="filter-cat" data-id="${esc(id)}" style="all:unset;display:flex;justify-content:space-between;cursor:pointer"><span>${i + 1}. ${esc(catById(id)?.name || id)}</span><span class="mono">${eur0(v)}</span></button>`).join("")}</div>` : ""}
@@ -1459,7 +1459,7 @@ function viewMovimenti() {
   const q = (S.q || "").trim().toLowerCase();
   let list = q ? [...S.expTx, ...S.incTx].filter(t => txMatches(t, q)).sort((a, b) => (b.date || "").localeCompare(a.date || "") || (b.created || 0) - (a.created || 0)) : S.tx;
   if (S.catFilter) list = list.filter(t => S.catFilter === "_inc" ? t.kind === "inc" : t.cat === S.catFilter);
-  const tot = list.reduce((a, t) => a + (t.kind === "inc" ? 0 : Number(t.amount) || 0), 0);
+  const tot = list.reduce((a, t) => a + (t.kind === "inc" || t.from ? 0 : Number(t.amount) || 0), 0);
   const inc = list.reduce((a, t) => a + (t.kind === "inc" ? Number(t.amount) || 0 : 0), 0);
   const usedCats = [...new Set(S.tx.filter(t => t.kind !== "inc").map(t => t.cat))];
   const tags = allTags();
@@ -1477,7 +1477,7 @@ function viewMovimenti() {
     const days = []; for (const t of list) { const d = days[days.length - 1]; if (d && d.date === t.date) d.items.push(t); else days.push({date:t.date, items:[t]}); }
     let lastM = "";
     main = `<div class="card"><div class="card-c flush" style="padding-top:0">` + days.map(d => {
-      const out = d.items.reduce((a, t) => a + (t.kind === "inc" ? 0 : Number(t.amount) || 0), 0);
+      const out = d.items.reduce((a, t) => a + (t.kind === "inc" || t.from ? 0 : Number(t.amount) || 0), 0);
       const m = (d.date || "").slice(0, 7); const mh = q && m !== lastM ? `<div class="dayh" style="color:var(--foreground);font-size:13px;padding-top:18px;text-transform:capitalize">${esc(mLabel(m))}</div>` : ""; lastM = m;
       return mh + `<div class="dayh"><span>${esc(dayLabel(d.date))}</span>${out ? `<span class="mono">−${eur(out)}</span>` : ""}</div>` + d.items.map(txRow).join("");
     }).join("") + `</div></div>`;
